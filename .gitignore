@@ -1,0 +1,10 @@
+# identifica o SEU SSD: versione só o .example
+sync_ssd_config.json
+
+# saída local do script
+*.log
+ultimo_resultado.json
+sync.lock
+
+__pycache__/
+*.pyc
