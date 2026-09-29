@@ -1,0 +1,20 @@
+{
+  "serial": "",
+  "id": "",
+  "origem": "G:\\Meu Drive",
+  "pasta_destino": "",
+  "excluir": [
+    "*.gdoc", "*.gsheet", "*.gslides", "*.gform", "*.gdraw", "*.gmap",
+    "*.gsite", "*.gjam", "*.glink", "*.gscript", "*.gtable", "*.gnote",
+    "desktop.ini", "thumbs.db", ".ds_store", "~$*", ".~lock*", "*.sync_tmp",
+    "node_modules"
+  ],
+  "tolerancia_seg": 2,
+  "limite_abs": 300,
+  "limite_pct": 0.25,
+  "dias_versoes": 90,
+  "max_versoes_gb": 0,
+  "margem_espaco_gb": 2,
+  "caminhos_longos": true,
+  "horas_lock_velho": 12
+}
