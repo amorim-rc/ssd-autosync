@@ -17,7 +17,6 @@ Um segundo script, independente, **confere o resultado**: compara todos os arqui
 | `Fazer backup.bat` | Duplo clique: backup seguido de conferência. |
 | `Simular backup.bat` | Duplo clique: mostra o que o backup faria, sem copiar nada. |
 | `Conferir SSD.bat` | Duplo clique: só a conferência. |
-| `Publicar no GitHub.bat` | Duplo clique: envia suas mudanças ao seu repositório, com trava que impede publicar o registro do SSD. |
 | `sync_ssd_config.example.json` | Modelo de configuração. O `sync_ssd_config.json` real é criado pelo `--registrar` e fica fora do Git. |
 | `test_sync_ssd.py`, `test_conferir_ssd.py` | Testes. |
 
@@ -225,10 +224,6 @@ schtasks /Create /TN "SyncSSD" /SC MINUTE /MO 30 /TR "cmd /c \"\"C:\Python312\py
 ```
 
 Uma vez por mês vale rodar manualmente `python sync_ssd.py --quarentena --verificar` e olhar o log.
-
-## Publicar suas mudanças no GitHub
-
-Se você mantém um fork, `Publicar no GitHub.bat` faz `git add`, mostra os arquivos, pede confirmação e uma frase de descrição, e então faz commit e push para o `origin` da pasta. Antes de enviar, ele confere se o `serial` ou o `id` do seu `sync_ssd_config.json` aparecem em algum arquivo que iria para o repositório; se aparecerem, para sem enviar nada.
 
 ## Perguntas frequentes
 
