@@ -6,6 +6,8 @@ conferir_ssd.py: as duas ferramentas têm código independente e precisam
 concordar sobre o que é "SSD idêntico ao Drive".
 """
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -14,6 +16,7 @@ import unittest
 from pathlib import Path
 
 import conferir_ssd as c
+import visual_ssd as v
 
 
 def escrever(caminho, conteudo=b"x", mtime=1_600_000_000):
@@ -35,14 +38,16 @@ class Base(unittest.TestCase):
         self.config = self.tmp / "config.json"
         self.config.write_text(json.dumps({"serial": "TESTE", "id": "id-teste",
                                            "origem": str(self.origem)}), encoding="utf-8")
-        self._orig = (c.localizar_ssd, c.LOG_LOCAL, c.RESULTADO_LOCAL, c.PASTA_LOCAL)
+        self._orig = (c.localizar_ssd, c.LOG_LOCAL, c.RESULTADO_LOCAL, c.PASTA_LOCAL, v.notificar)
         c.localizar_ssd = lambda cfg: self.ssd if cfg["serial"] == "TESTE" else None
         c.PASTA_LOCAL = self.tmp / "local"
         c.LOG_LOCAL = c.PASTA_LOCAL / "conferencia.log"
         c.RESULTADO_LOCAL = c.PASTA_LOCAL / "ultima_conferencia.json"
+        self.notificacoes = []
+        v.notificar = lambda titulo, texto: self.notificacoes.append((titulo, texto)) or True
 
     def tearDown(self):
-        c.localizar_ssd, c.LOG_LOCAL, c.RESULTADO_LOCAL, c.PASTA_LOCAL = self._orig
+        c.localizar_ssd, c.LOG_LOCAL, c.RESULTADO_LOCAL, c.PASTA_LOCAL, v.notificar = self._orig
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def par(self, rel, conteudo=b"x", mtime=1_600_000_000):
@@ -50,7 +55,11 @@ class Base(unittest.TestCase):
         escrever(self.ssd / rel, conteudo, mtime)
 
     def rodar(self, *args):
-        return c.main(["--config", str(self.config), *args])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            codigo = c.main(["--config", str(self.config), *args])
+        self.saida = buf.getvalue()
+        return codigo
 
     def resultado(self):
         return json.loads(c.RESULTADO_LOCAL.read_text(encoding="utf-8"))
@@ -63,11 +72,11 @@ class TestConferir(unittest.TestCase):
         ssd = {"ok": (1, 101.5, False), "tam": (2, 100.0, False), "velho": (1, 100.0, False),
                "novo": (1, 200.0, False), "extra": (1, 1.0, False)}
         r = c.conferir(drive, ssd, tolerancia=2)
-        self.assertEqual(r["faltando"], ["falta", "nb   (ainda não baixado pelo Google Drive)"])
-        self.assertEqual(r["tamanho"], ["tam   (Drive 1 B, SSD 2 B)"])
-        self.assertEqual(r["desatualizado"], ["velho"])
-        self.assertEqual(r["mais_novo"], ["novo"])
-        self.assertEqual(r["extras"], ["extra"])
+        self.assertEqual(r["faltando"], [("falta", ""), ("nb", "ainda não baixado pelo Google Drive")])
+        self.assertEqual(r["tamanho"], [("tam", "Drive 1 B, SSD 2 B")])
+        self.assertEqual(r["desatualizado"], [("velho", "")])
+        self.assertEqual(r["mais_novo"], [("novo", "")])
+        self.assertEqual(r["extras"], [("extra", "")])
 
 
 class TestListar(Base):
@@ -114,8 +123,9 @@ class TestFluxo(Base):
         escrever(self.ssd / "extra.txt", b"2")
         antes = sorted(p.relative_to(self.tmp) for p in self.tmp.rglob("*") if "local" not in p.parts)
         self.rodar()
+        proprios = {"historico.json", "historico.html"}      # registros da própria conferência
         depois = sorted(p.relative_to(self.tmp) for p in self.tmp.rglob("*")
-                        if "local" not in p.parts and "logs" not in p.parts)
+                        if "local" not in p.parts and "logs" not in p.parts and p.name not in proprios)
         self.assertEqual(antes, depois)
 
     def test_log_nos_dois_lados(self):
@@ -134,6 +144,57 @@ class TestFluxo(Base):
         self.assertEqual(self.rodar(), 10)                   # sem registro
 
 
+class TestModosDeSaida(Base):
+    def _divergente(self):
+        self.par("ok.txt")
+        escrever(self.origem / "Obra" / "falta.md")
+        escrever(self.ssd / "saiu.txt")
+
+    def test_tela(self):
+        self.par("a.txt")
+        self.assertEqual(self.rodar(), 0)
+        self.assertIn("SSD idêntico ao Drive", self.saida)
+        self.assertNotIn("\033", self.saida)
+        self._divergente()
+        self.assertEqual(self.rodar(), 1)
+        self.assertIn("Faltando no SSD (1)", self.saida)
+        self.assertIn("falta.md", self.saida)
+        self.assertIn("só no SSD", self.saida)
+
+    def test_detalhado(self):
+        self._divergente()
+        self.assertEqual(self.rodar("--detalhado"), 1)
+        self.assertIn("FALTANDO NO SSD: 1", self.saida)
+
+    def test_json(self):
+        self._divergente()
+        self.assertEqual(self.rodar("--json"), 1)
+        d = json.loads(self.saida)
+        self.assertEqual((d["codigo"], d["resultado"], d["divergencias"]), (1, "aviso", 1))
+        self.assertEqual(d["faltando"], [{"caminho": os.path.join("Obra", "falta.md"), "nota": ""}])
+        self.assertEqual(d["extras"], [{"caminho": "saiu.txt", "nota": ""}])
+        c.localizar_ssd = lambda cfg: None
+        self.assertEqual(self.rodar("--json"), 2)
+        self.assertEqual(json.loads(self.saida)["codigo"], 2)
+
+    def test_silencioso(self):
+        self.par("a.txt")
+        self.assertEqual(self.rodar("--silencioso"), 0)
+        self.assertEqual((self.saida, self.notificacoes), ("", []))
+        self._divergente()
+        self.assertEqual(self.rodar("--silencioso"), 1)
+        self.assertEqual(self.saida, "")
+        self.assertEqual(len(self.notificacoes), 1)
+
+    def test_historico_registra_conferencia(self):
+        self.par("a.txt")
+        self.rodar()
+        regs = json.loads((self.ssd / c.PASTA_SISTEMA / "historico.json").read_text(encoding="utf-8"))
+        self.assertEqual((regs[-1]["tipo"], regs[-1]["resultado"], regs[-1]["divergencias"]),
+                         ("conferencia", "ok", 0))
+        self.assertTrue((c.PASTA_LOCAL / "historico.html").exists())
+
+
 class TestConcordaComOBackup(Base):
     """sync_ssd.py faz o backup; conferir_ssd.py tem que dizer 'idêntico'."""
 
@@ -143,23 +204,33 @@ class TestConcordaComOBackup(Base):
         cfg.update(limite_abs=10_000, margem_espaco_gb=0)
         self.config.write_text(json.dumps(cfg), encoding="utf-8")
         escrever(self.ssd / c.PASTA_SISTEMA / c.ARQ_IDENTIDADE, b"id=id-teste")
-        orig = (s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL)
+        orig = (s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL, s.PASTA_LOCAL)
         s.localizar_ssd = lambda cfg: self.ssd
         s.LOCK, s.LOG_LOCAL = self.tmp / "sync.lock", self.tmp / "local" / "sync.log"
         s.ESTADO_LOCAL = self.tmp / "local" / "estado.json"
+        s.PASTA_LOCAL = self.tmp / "local"
+
+        def backup(*args):
+            with contextlib.redirect_stdout(io.StringIO()):
+                return s.main(["--config", str(self.config), "--silencioso", *args])
         try:
             for i in range(20):
                 escrever(self.origem / f"p{i % 4}" / f"arq {i}.txt", b"x" * i, mtime=1_600_000_000 + i)
             escrever(self.origem / "planilha.gsheet")
             self.assertEqual(self.rodar(), 1)                              # antes do backup
-            self.assertEqual(s.main(["--config", str(self.config)]), 0)    # backup
+            self.assertEqual(backup(), 0)                                  # backup
             self.assertEqual(self.rodar(), 0)                              # depois: idêntico
             escrever(self.origem / "p0" / "arq 0.txt", b"editado", mtime=1_600_009_999)
             self.assertEqual(self.rodar(), 1)                              # edição pega
-            self.assertEqual(s.main(["--config", str(self.config)]), 0)
+            self.assertEqual(backup(), 0)
             self.assertEqual(self.rodar(), 0)
+            (self.origem / "p1" / "arq 1.txt").unlink()                    # apagado no Drive
+            self.assertEqual(self.rodar(), 0)                              # extra no SSD não é divergência
+            self.assertEqual(backup("--quarentena"), 0)
+            self.assertEqual(self.rodar("--json"), 0)
+            self.assertEqual(json.loads(self.saida)["extras"], [])         # quarentena tirou do espelho
         finally:
-            s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL = orig
+            s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL, s.PASTA_LOCAL = orig
 
 
 if __name__ == "__main__":

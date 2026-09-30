@@ -8,9 +8,9 @@ Regras:
   * Ignora atalhos do Google Docs (.gdoc, .gsheet...), desktop.ini e o que
     mais estiver em "excluir" na configuração.
   * NUNCA apaga nada do SSD. Antes de sobrescrever um arquivo, guarda a versão
-    antiga em _sync_ssd/versoes/<data>/ (mantidas por "dias_versoes" dias).
-    Órfãos (arquivos que saíram do Drive) só vão para essa mesma pasta se você
-    pedir com --quarentena.
+    antiga em _sync_ssd/versoes-antigas/<data>/ (por "dias_versoes" dias).
+    Órfãos (arquivos que saíram do Drive) só saem do espelho se você pedir com
+    --quarentena, e vão para _sync_ssd/quarentena/<data>/ (por "dias_quarentena" dias).
   * Só roda no SSD registrado: exige o número de série do volume E o arquivo
     de identidade com o ID gerado no registro. Outro disco com a mesma letra
     ou o mesmo nome é recusado.
@@ -25,11 +25,18 @@ Uso:
   python sync_ssd.py                       # executa o backup
   python sync_ssd.py --forcar              # executa ignorando a trava de segurança
   python sync_ssd.py --orfaos              # só lista o que está no SSD mas saiu do Drive
-  python sync_ssd.py --quarentena          # backup + move órfãos para _sync_ssd/versoes/
+  python sync_ssd.py --quarentena          # backup + move órfãos para _sync_ssd/quarentena/
   python sync_ssd.py --verificar [N]       # backup + confere hash de N arquivos (0 = todos)
   python sync_ssd.py --status              # mostra o resultado da última execução
+  python sync_ssd.py --historico           # abre o histórico de execuções no navegador
   python sync_ssd.py --alertar-se-velho 7  # se o SSD não estiver plugado e o último
                                            # backup tiver mais de 7 dias, avisa na tela
+
+Saída (o backup é o mesmo; muda só como o resultado aparece):
+  (padrão)       tela resumida, com cores e símbolos
+  --detalhado    formato técnico, hora em cada linha
+  --silencioso   nada na tela; notificação do Windows se houver problema (agendamento)
+  --json         o resultado em JSON, para outro programa ler
 
 Códigos de saída: veja CODIGOS no início do arquivo (ou o README).
 """
@@ -51,11 +58,16 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-VERSAO = "2.0"
+import visual_ssd as v
+
+VERSAO = "2.1"
 WINDOWS = os.name == "nt"
 
 # ---------------------------------------------------------------- configuração
 PASTA_SISTEMA = "_sync_ssd"        # na raiz do SSD: identidade, logs, versões
+PASTA_VERSOES = "versoes-antigas"  # dentro de PASTA_SISTEMA: versão anterior de arquivos sobrescritos
+PASTA_QUARENTENA = "quarentena"    # dentro de PASTA_SISTEMA: arquivos que saíram da origem
+PASTA_LEGADA = "versoes"           # nome usado até a 2.0 (migrado para PASTA_VERSOES)
 ARQ_IDENTIDADE = "IDENTIDADE_SSD.txt"
 ARQ_ESTADO = "ultimo_resultado.json"
 SUFIXO_TMP = ".sync_tmp"
@@ -74,7 +86,8 @@ PADRAO = {
     "limite_abs": 300,              # trava: mais que isso de alterações...
     "limite_pct": 0.25,             # ...E mais que 25% do total -> aborta
     "dias_versoes": 90,             # versões antigas ficam por tantos dias
-    "max_versoes_gb": 0,            # teto de espaço para versões (0 = sem teto)
+    "dias_quarentena": 90,          # arquivos em quarentena ficam por tantos dias
+    "max_versoes_gb": 0,            # teto de espaço para versões antigas (0 = sem teto)
     "margem_espaco_gb": 2,          # espaço livre mínimo que deve sobrar no SSD
     "caminhos_longos": True,        # usa o prefixo \\?\ para caminhos > 260 caracteres
     "horas_lock_velho": 12,         # lock mais velho que isso é considerado abandonado
@@ -109,8 +122,12 @@ LOCK = PASTA_LOCAL / "sync.lock"
 
 # ---------------------------------------------------------------------- log
 class Log:
+    """Log técnico (hora em cada linha). Sempre vai para os arquivos de log; só
+    aparece na tela quando `ecoar` é verdadeiro (modo --detalhado)."""
+
     def __init__(self):
         self.linhas = []
+        self.ecoar = True
         try:
             sys.stdout.reconfigure(errors="replace")
         except (AttributeError, ValueError):
@@ -119,6 +136,8 @@ class Log:
     def __call__(self, msg):
         linha = f"{datetime.now():%Y-%m-%d %H:%M:%S}  {msg}"
         self.linhas.append(linha)
+        if not self.ecoar:
+            return
         try:
             print(linha)
         except (UnicodeEncodeError, AttributeError, OSError):
@@ -461,6 +480,81 @@ def limpar_versoes(pasta_versoes, dias, max_bytes=0, agora=None):
     return removidas
 
 
+def _mesclar_pasta(origem, destino):
+    """Move o conteúdo de `origem` para dentro de `destino` sem sobrescrever nada.
+    Arquivo que já existe no destino fica com o sufixo '.migrado'."""
+    for raiz, _, nomes in os.walk(origem):
+        alvo_dir = Path(destino) / os.path.relpath(raiz, origem)
+        alvo_dir.mkdir(parents=True, exist_ok=True)
+        for n in nomes:
+            alvo = alvo_dir / n
+            if alvo.exists():
+                alvo = alvo_dir / (n + ".migrado")
+            os.replace(os.path.join(raiz, n), alvo)
+    for raiz, _, _ in sorted(os.walk(origem), key=lambda t: len(t[0]), reverse=True):
+        try:
+            os.rmdir(raiz)
+        except OSError:
+            pass
+
+
+def migrar_pasta_legada(sistema):
+    """Até a 2.0, versões antigas e quarentena ficavam juntas em _sync_ssd/versoes/.
+    Não há como separá-las depois; tudo vai para versoes-antigas/. -> pastas migradas."""
+    legado = Path(sistema) / PASTA_LEGADA
+    if not legado.is_dir():
+        return 0
+    destino = Path(sistema) / PASTA_VERSOES
+    destino.mkdir(parents=True, exist_ok=True)
+    n = 0
+    for p in list(legado.iterdir()):
+        alvo = destino / p.name
+        if p.is_dir() and alvo.exists():
+            _mesclar_pasta(p, alvo)
+        elif not alvo.exists():
+            os.replace(p, alvo)
+        else:
+            os.replace(p, destino / (p.name + ".migrado"))
+        n += 1
+    try:
+        legado.rmdir()
+    except OSError:
+        pass
+    return n
+
+
+def inventario(pasta, dias, agora=None):
+    """{"arquivos", "bytes", "expira"} de uma pasta de guarda (versoes-antigas ou
+    quarentena). `expira` é quando a pasta datada mais antiga será removida."""
+    arquivos = total = 0
+    mais_antiga = None
+    pasta = Path(pasta)
+    if pasta.is_dir():
+        for p in pasta.iterdir():
+            if not p.is_dir():
+                continue
+            try:
+                data = datetime.strptime(p.name[:17], FORMATO_CARIMBO)
+                mais_antiga = data if mais_antiga is None else min(mais_antiga, data)
+            except ValueError:
+                pass
+            for raiz, _, nomes in os.walk(p):
+                for n in nomes:
+                    try:
+                        total += os.stat(os.path.join(raiz, n)).st_size
+                        arquivos += 1
+                    except OSError:
+                        pass
+    expira = mais_antiga + timedelta(days=dias) if mais_antiga else None
+    return {"arquivos": arquivos, "bytes": total, "expira": expira}
+
+
+def somar_inventarios(*invs):
+    datas = [i["expira"] for i in invs if i["expira"]]
+    return {"arquivos": sum(i["arquivos"] for i in invs), "bytes": sum(i["bytes"] for i in invs),
+            "expira": min(datas) if datas else None}
+
+
 def verificar_hashes(arq_o, arq_d, origem, destino, n, tolerancia, caminhos_longos=True):
     """Compara o SHA-256 de `n` arquivos iguais em ambos os lados (0 = todos)."""
     comuns = [r for r, (tam, mt, ph) in arq_o.items()
@@ -543,12 +637,7 @@ def mostrar_status():
 
 def alertar(titulo, texto):
     log(f"ALERTA: {texto}")
-    if WINDOWS:
-        try:
-            # MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST
-            ctypes.windll.user32.MessageBoxW(None, texto, titulo, 0x30 | 0x10000 | 0x40000)
-        except Exception:      # noqa: BLE001 - alerta é melhor esforço
-            pass
+    v.notificar(titulo, texto)
 
 
 def alertar_se_velho(dias):
@@ -578,7 +667,20 @@ def alertar_se_velho(dias):
 
 
 # ------------------------------------------------------------------- backup
-def sincronizar(a, cfg, ssd, simular, estado):
+def novo_resultado():
+    """O que aconteceu na execução, preenchido por sincronizar() e lido pela apresentação."""
+    return {
+        "novos": [], "atualizados": [],          # [(caminho, bytes)]
+        "movidos": [],                           # [(de, para)]
+        "quarentena": [], "orfaos": [],          # [caminho]
+        "falhas": [],                            # [(caminho, erro)]
+        "nao_baixados": 0, "bytes_copiados": 0, "a_copiar_bytes": 0,
+        "trava_total": 0, "espaco": None,        # espaco = (necessário, margem, livre)
+        "verificados": None, "divergentes": [], "migradas": 0,
+    }
+
+
+def sincronizar(a, cfg, ssd, simular, estado, res, tela=None):
     L = cfg["caminhos_longos"]
     tol = cfg["tolerancia_seg"]
     sistema = ssd / PASTA_SISTEMA
@@ -588,6 +690,14 @@ def sincronizar(a, cfg, ssd, simular, estado):
     if not origem.is_dir():
         log(f"Origem {origem} indisponível (Google Drive fechado?). Nada foi feito.")
         return 3
+
+    if not simular:
+        try:
+            res["migradas"] = migrar_pasta_legada(sistema)
+            if res["migradas"]:
+                log(f"Pasta '{PASTA_LEGADA}' migrada para '{PASTA_VERSOES}' ({res['migradas']} itens).")
+        except OSError as ex:
+            log(f"AVISO: não consegui migrar a pasta '{PASTA_LEGADA}': {ex}")
 
     log(f"Início{' (SIMULAÇÃO)' if simular else ''}: {origem} -> {destino}  [sync_ssd {VERSAO}]")
     excluido = excluidor(cfg["excluir"])
@@ -611,12 +721,12 @@ def sincronizar(a, cfg, ssd, simular, estado):
         alterados = [r for r in alterados if r not in pular]
         log(f"AVISO: {len(nao_baixados)} arquivos ainda não baixados pelo Google Drive foram "
             "pulados. Marque a pasta como 'Disponível offline' ou rode com --baixar.")
-    estado["nao_baixados"] = len(nao_baixados)
+    estado["nao_baixados"] = res["nao_baixados"] = len(nao_baixados) if not a.baixar else 0
 
     # Movidos/renomeados: mover dentro do SSD em vez de copiar de novo.
     movidos = detectar_movidos(
         novos, orfaos, arq_o, arq_d, tol,
-        confirmar=lambda n, v: mesmo_conteudo_rapido(longo(origem / n, L), longo(destino / v, L)))
+        confirmar=lambda n, v_: mesmo_conteudo_rapido(longo(origem / n, L), longo(destino / v_, L)))
     if movidos:
         novos = [r for r in novos if r not in movidos]
         antigos = set(movidos.values())
@@ -626,6 +736,7 @@ def sincronizar(a, cfg, ssd, simular, estado):
         f"movidos: {len(movidos)} | órfãos: {len(orfaos)}")
     estado.update(origem_arquivos=len(arq_o), novos=len(novos), alterados=len(alterados),
                   movidos=len(movidos), orfaos=len(orfaos))
+    res["orfaos"] = list(orfaos)
 
     if a.orfaos:
         for r in orfaos:
@@ -633,6 +744,7 @@ def sincronizar(a, cfg, ssd, simular, estado):
         return 0
 
     total = len(novos) + len(alterados) + (len(orfaos) if a.quarentena else 0)
+    res["trava_total"] = total
     trava = total > cfg["limite_abs"] and total > cfg["limite_pct"] * len(arq_o)
     if trava and not a.forcar:
         msg = (f"{total} arquivos mudariam de uma vez ({total / len(arq_o):.0%} do total). "
@@ -645,16 +757,19 @@ def sincronizar(a, cfg, ssd, simular, estado):
             return 5
 
     necessario = sum(arq_o[r][0] for r in novos + alterados)
+    res["a_copiar_bytes"] = necessario
     if not simular:
         livre = shutil.disk_usage(str(ssd)).free
         margem = cfg["margem_espaco_gb"] * 1024 ** 3
         if necessario + margem > livre:
+            res["espaco"] = (necessario, margem, livre)
             log(f"ESPAÇO INSUFICIENTE: precisa de {fmt_bytes(necessario)} + margem de "
                 f"{fmt_bytes(margem)}, mas só há {fmt_bytes(livre)} livres. Nada foi copiado.")
             return 6
 
     carimbo = f"{datetime.now():{FORMATO_CARIMBO}}"
-    pasta_versao = sistema / "versoes" / carimbo
+    pasta_versao = sistema / PASTA_VERSOES / carimbo
+    pasta_quarentena = sistema / PASTA_QUARENTENA / carimbo
     ok = falhas = quarentenados = 0
     bytes_copiados = 0
     copiados = []
@@ -662,74 +777,117 @@ def sincronizar(a, cfg, ssd, simular, estado):
     for novo, antigo in sorted(movidos.items()):
         log(f"  MOVIDO   {antigo}  ->  {novo}")
         if simular:
+            res["movidos"].append((antigo, novo))
             continue
         try:
             mover(destino / antigo, destino / novo, L)
             remover_pastas_vazias((destino / antigo).parent, destino, L)
             arq_d[novo] = arq_d.pop(antigo)
+            res["movidos"].append((antigo, novo))
         except OSError as ex:
             log(f"  ERRO     mover {antigo}: {ex}. Vai copiar em vez de mover.")
             novos.append(novo)
             orfaos.append(antigo)
 
-    for rel in sorted(novos) + alterados:
-        tipo = "ALTERADO" if rel in arq_d else "NOVO"
-        log(f"  {tipo:8} {rel}")
-        if simular:
-            continue
-        src, dst = origem / rel, destino / rel
-        try:
-            copiar(src, dst, antigo=(pasta_versao / rel) if tipo == "ALTERADO" else None, caminhos_longos=L)
-            ok += 1
-            bytes_copiados += arq_o[rel][0]
-            copiados.append((arq_o[rel][0], rel))
-            arq_d[rel] = arq_o[rel]
-        except OSError as ex:
-            falhas += 1
-            log(f"  ERRO     {rel}: {ex}")
+    lista = sorted(novos) + alterados
+    prog = None
+    if tela is not None and not simular and (len(lista) > 50 or necessario > 100 * 1024 ** 2):
+        prog = v.Progresso(tela, len(lista), necessario)
+    try:
+        for rel in lista:
+            tipo = "ALTERADO" if rel in arq_d else "NOVO"
+            chave = "atualizados" if tipo == "ALTERADO" else "novos"
+            log(f"  {tipo:8} {rel}")
+            if simular:
+                res[chave].append((rel, arq_o[rel][0]))
+                continue
+            src, dst = origem / rel, destino / rel
+            try:
+                copiar(src, dst, antigo=(pasta_versao / rel) if tipo == "ALTERADO" else None, caminhos_longos=L)
+                ok += 1
+                bytes_copiados += arq_o[rel][0]
+                copiados.append((arq_o[rel][0], rel))
+                res[chave].append((rel, arq_o[rel][0]))
+                arq_d[rel] = arq_o[rel]
+            except OSError as ex:
+                falhas += 1
+                res["falhas"].append((rel, str(ex)))
+                log(f"  ERRO     {rel}: {ex}")
+            if prog:
+                prog.avancar(arq_o[rel][0])
+    finally:
+        if prog:
+            prog.fim()
 
     if a.quarentena:
         for rel in sorted(orfaos):
             log(f"  QUARENT. {rel}")
             if simular:
+                res["quarentena"].append(rel)
                 continue
             try:
-                mover(destino / rel, pasta_versao / rel, L)
+                mover(destino / rel, pasta_quarentena / rel, L)
                 remover_pastas_vazias((destino / rel).parent, destino, L)
                 quarentenados += 1
+                res["quarentena"].append(rel)
             except OSError as ex:
                 falhas += 1
+                res["falhas"].append((rel, str(ex)))
                 log(f"  ERRO     quarentena {rel}: {ex}")
 
     codigo = 0
     if not simular:
-        for nome in limpar_versoes(sistema / "versoes", cfg["dias_versoes"],
-                                   cfg["max_versoes_gb"] * 1024 ** 3):
-            log(f"Versões antigas removidas: {nome}")
+        removidas = limpar_versoes(sistema / PASTA_VERSOES, cfg["dias_versoes"], cfg["max_versoes_gb"] * 1024 ** 3)
+        removidas += limpar_versoes(sistema / PASTA_QUARENTENA, cfg["dias_quarentena"])
+        for nome in removidas:
+            log(f"Pasta de guarda expirada removida: {nome}")
         if a.verificar is not None:
             n, divergentes = verificar_hashes(arq_o, arq_d, origem, destino, a.verificar, tol, L)
             for r in divergentes:
                 log(f"  DIVERGE  {r}")
             log(f"Verificação: {n} arquivos conferidos por hash, {len(divergentes)} divergentes.")
             estado.update(verificados=n, divergentes=len(divergentes))
+            res["verificados"], res["divergentes"] = n, divergentes
             if divergentes:
                 codigo = 8
         if len(copiados) > 1:
             log("Maiores arquivos copiados:")
             for tam, rel in sorted(copiados, reverse=True)[:10]:
                 log(f"  {fmt_bytes(tam):>10}  {rel}")
-        log(f"Fim: {ok} copiados ({fmt_bytes(bytes_copiados)}), {len(movidos)} movidos, "
+        log(f"Fim: {ok} copiados ({fmt_bytes(bytes_copiados)}), {len(res['movidos'])} movidos, "
             f"{quarentenados} em quarentena, {falhas} falhas.")
 
+    res["bytes_copiados"] = bytes_copiados
     estado.update(copiados=ok, falhas=falhas, quarentenados=quarentenados, bytes_copiados=bytes_copiados)
     if codigo == 0 and falhas:
         codigo = 1
     return codigo
 
 
-def executar(a, cfg):
+def contexto(a, cfg):
+    """Tudo o que a apresentação precisa saber sobre a execução."""
+    return {
+        "codigo": 11, "cfg": cfg, "ssd": None, "res": novo_resultado(), "inventario": None,
+        "inicio": datetime.now(), "duracao": 0.0, "ultimo_backup": None,
+        "simular": bool(a.simular or a.orfaos), "modo_orfaos": bool(a.orfaos),
+        "quarentena_ativa": bool(a.quarentena), "baixar": bool(a.baixar),
+    }
+
+
+def _data_ultimo_backup(estado):
+    try:
+        return datetime.fromisoformat(estado["ultimo_backup"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def executar(a, cfg, tela=None):
+    ctx = contexto(a, cfg)
     inicio = time.time()
-    simular = a.simular or a.orfaos
+    simular = ctx["simular"]
+    estado = ler_estado(ESTADO_LOCAL)
+    ctx["ultimo_backup"] = _data_ultimo_backup(estado)
+
     ssd = localizar_ssd(cfg)
     if not ssd:
         log("SSD de backup não encontrado. Nada foi feito.")
@@ -737,20 +895,24 @@ def executar(a, cfg):
         if a.alertar_se_velho:
             codigo = alertar_se_velho(a.alertar_se_velho) or 2
         log.gravar(LOG_LOCAL)
-        return codigo
+        ctx.update(codigo=codigo, duracao=time.time() - inicio)
+        return ctx
+    ctx["ssd"] = ssd
+    # O SSD também guarda o último resultado; vale o mais recente dos dois
+    # (o estado local pode ser de outro computador, ou ter sido apagado).
+    datas = [d for d in (ctx["ultimo_backup"],
+                         _data_ultimo_backup(ler_estado(ssd / PASTA_SISTEMA / ARQ_ESTADO))) if d]
+    ctx["ultimo_backup"] = max(datas) if datas else None
 
-    estado = ler_estado(ESTADO_LOCAL)
     estado.update(inicio=datetime.now().isoformat(timespec="seconds"), simulacao=simular, codigo=None)
     for k in ("origem_arquivos", "novos", "alterados", "movidos", "orfaos", "quarentenados",
               "copiados", "falhas", "nao_baixados", "bytes_copiados", "verificados", "divergentes"):
         estado.pop(k, None)
     codigo = 11
     try:
-        codigo = sincronizar(a, cfg, ssd, simular, estado)
-        return codigo
+        codigo = sincronizar(a, cfg, ssd, simular, estado, ctx["res"], tela)
     except Exception:      # noqa: BLE001 - registrar no log, não morrer em silêncio no pythonw
         log("ERRO INESPERADO:\n" + traceback.format_exc())
-        return codigo
     finally:
         estado.update(fim=datetime.now().isoformat(timespec="seconds"),
                       duracao_seg=round(time.time() - inicio, 1), codigo=codigo)
@@ -760,28 +922,241 @@ def executar(a, cfg):
         gravar_estado(estado, *destinos_estado)
         log_ssd = ssd / PASTA_SISTEMA / "logs" / f"{datetime.now():%Y-%m}.log"
         log.gravar(LOG_LOCAL, *([] if simular else [log_ssd]))
+        sistema = ssd / PASTA_SISTEMA
+        ctx["inventario"] = {       # a pasta legada só existe até a primeira execução real
+            "versoes": somar_inventarios(inventario(sistema / PASTA_VERSOES, cfg["dias_versoes"]),
+                                         inventario(sistema / PASTA_LEGADA, cfg["dias_versoes"])),
+            "quarentena": inventario(sistema / PASTA_QUARENTENA, cfg["dias_quarentena"]),
+        }
+        ctx.update(codigo=codigo, duracao=time.time() - inicio)
+    return ctx
+
+
+# --------------------------------------------------------------- apresentação
+FRASES = {
+    1: "Backup feito, mas {falhas} não puderam ser copiados. Em geral é arquivo aberto: "
+       "feche o programa e rode de novo.",
+    2: "SSD de backup não encontrado. Ele está plugado?",
+    3: "A origem ({origem}) não está disponível. O Google Drive está aberto?",
+    4: "A origem está vazia. Nada foi feito, por segurança.",
+    5: "Trava de segurança: {trava} mudariam de uma vez. Nada foi copiado. Se foi você "
+       "(reorganizou pastas, por exemplo), rode com --forcar.",
+    6: "Espaço insuficiente no SSD: faltam {falta}. Nada foi copiado.",
+    7: "Já há um backup em andamento. Espere ele terminar.",
+    8: "A verificação de conteúdo encontrou {divergentes} diferentes do Drive.",
+    9: "O último backup está velho demais. Plugue o SSD de backup.",
+    10: "O SSD ainda não foi registrado. Rode: python sync_ssd.py --registrar D:",
+    11: "Erro inesperado. Detalhes no log: {log}",
+}
+NOTIFICAR = {1, 3, 4, 5, 6, 8, 11}     # códigos que viram notificação no modo --silencioso
+
+
+def severidade(codigo):
+    if codigo == 0:
+        return "ok"
+    return "aviso" if codigo in (1, 8, 9) else "erro"
+
+
+def frase(ctx):
+    """O resultado em uma frase, em português, sem código numérico."""
+    codigo, res = ctx["codigo"], ctx["res"]
+    if codigo == 0:
+        if ctx["modo_orfaos"]:
+            n = len(res["orfaos"])
+            return (v.plural(n, "arquivo saiu", "arquivos saíram") + " do Drive e continua(m) no SSD."
+                    if n else "Nenhum arquivo saiu do Drive.")
+        copiar = len(res["novos"]) + len(res["atualizados"])
+        if ctx["simular"]:
+            partes = []
+            if copiar:
+                partes.append(v.plural(copiar, "arquivo seria copiado", "arquivos seriam copiados")
+                              + f" ({v.fmt_bytes(res['a_copiar_bytes'])})")
+            if res["movidos"]:
+                partes.append(v.plural(len(res["movidos"]), "seria movido", "seriam movidos"))
+            if res["quarentena"]:
+                partes.append(v.plural(len(res["quarentena"]), "iria", "iriam") + " para a quarentena")
+            return "Simulação: " + (", ".join(partes) if partes else "não haveria nada a fazer") + "."
+        partes = []
+        if copiar:
+            partes.append(v.plural(copiar, "copiado", "copiados") + f" ({v.fmt_bytes(res['bytes_copiados'])})")
+        if res["movidos"]:
+            partes.append(v.plural(len(res["movidos"]), "movido", "movidos"))
+        if res["quarentena"]:
+            partes.append(v.plural(len(res["quarentena"]), "para a quarentena", "para a quarentena"))
+        if not partes:
+            return "Tudo certo · nada mudou desde o último backup"
+        return f"Tudo certo · {', '.join(partes)} em {v.fmt_duracao(ctx['duracao'])}"
+    necessario, margem, livre = res["espaco"] or (0, 0, 0)
+    return FRASES.get(codigo, "Erro desconhecido.").format(
+        falhas=v.plural(len(res["falhas"]), "arquivo", "arquivos"),
+        origem=ctx["cfg"].get("origem", "?"),
+        trava=v.plural(res["trava_total"], "arquivo", "arquivos"),
+        falta=v.fmt_bytes(max(necessario + margem - livre, 0)),
+        divergentes=v.plural(len(res["divergentes"]), "arquivo", "arquivos"),
+        log=LOG_LOCAL)
+
+
+def _inventario_json(inv):
+    if not inv:
+        return None
+    return {k: {"arquivos": i["arquivos"], "bytes": i["bytes"],
+                "expira": i["expira"].isoformat(timespec="seconds") if i["expira"] else None}
+            for k, i in inv.items()}
+
+
+def saida_json(ctx):
+    res, ssd = ctx["res"], ctx["ssd"]
+    return {
+        "programa": "sync_ssd", "versao": VERSAO,
+        "codigo": ctx["codigo"], "resultado": severidade(ctx["codigo"]), "mensagem": frase(ctx),
+        "simulacao": ctx["simular"],
+        "inicio": ctx["inicio"].isoformat(timespec="seconds"), "duracao_seg": round(ctx["duracao"], 2),
+        "origem": ctx["cfg"].get("origem"),
+        "ssd": {"raiz": str(ssd), "nome": v.nome_ssd(ssd)} if ssd else None,
+        "novos": [{"caminho": r, "bytes": b} for r, b in res["novos"]],
+        "atualizados": [{"caminho": r, "bytes": b} for r, b in res["atualizados"]],
+        "movidos": [{"de": de, "para": para} for de, para in res["movidos"]],
+        "quarentena": res["quarentena"],
+        "orfaos": res["orfaos"],
+        "falhas": [{"caminho": r, "erro": e} for r, e in res["falhas"]],
+        "nao_baixados": res["nao_baixados"],
+        "bytes_copiados": res["bytes_copiados"],
+        "verificacao": (None if res["verificados"] is None
+                        else {"conferidos": res["verificados"], "divergentes": res["divergentes"]}),
+        "inventario": _inventario_json(ctx["inventario"]),
+    }
+
+
+def registro_historico(ctx):
+    res = ctx["res"]
+    return {
+        "tipo": "backup", "quando": ctx["inicio"].isoformat(timespec="seconds"),
+        "codigo": ctx["codigo"], "resultado": severidade(ctx["codigo"]), "frase": frase(ctx),
+        "novos": len(res["novos"]), "atualizados": len(res["atualizados"]),
+        "movidos": len(res["movidos"]), "quarentena": len(res["quarentena"]),
+        "falhas": len(res["falhas"]), "bytes": res["bytes_copiados"],
+        "duracao_seg": round(ctx["duracao"], 1),
+        "inventario": _inventario_json(ctx["inventario"]),
+    }
+
+
+def _era(de, para):
+    """Texto curto para um arquivo movido: o nome antigo, ou a pasta de onde veio."""
+    if os.path.dirname(de) == os.path.dirname(para):
+        return f"era {os.path.basename(de)}"
+    return f"veio de {os.path.dirname(de) or '(raiz)'}"
+
+
+def mostrar_tela(e, ctx):
+    res, cfg = ctx["res"], ctx["cfg"]
+    origem = Path(cfg.get("origem", "")).name or cfg.get("origem", "origem")
+    destino = v.nome_ssd(ctx["ssd"]) if ctx["ssd"] else "SSD de backup"
+    if ctx["modo_orfaos"]:
+        titulo = "ARQUIVOS QUE SAÍRAM DO DRIVE"
+    elif ctx["simular"]:
+        titulo = "SIMULAÇÃO DO BACKUP"
+    else:
+        titulo = "BACKUP"
+
+    e.escrever()
+    e.escrever("  " + e.c(f"{titulo}  {origem} {e.s['seta']} {destino}", "negrito"))
+    e.escrever("  " + e.c(f"{v.fmt_data_hora(ctx['inicio'])} {e.s['ponto']} último backup "
+                          f"{v.ha_quanto(ctx['ultimo_backup'], ctx['inicio'])}", "cinza"))
+    if ctx["simular"] and not ctx["modo_orfaos"]:
+        e.escrever("  " + e.c("Nada é copiado na simulação: isto mostra o que o backup faria.", "cinza"))
+    e.escrever()
+
+    def com_tamanho(itens):
+        return [(r, v.fmt_bytes(b)) for r, b in sorted(itens, key=lambda t: -t[1])]
+
+    v.secao(e, "novo", "Novos", com_tamanho(res["novos"]), "verde")
+    v.secao(e, "atualizado", "Atualizados", com_tamanho(res["atualizados"]), "ciano",
+            nota=f"versão anterior guardada por {cfg['dias_versoes']} dias")
+    v.secao(e, "movido", "Movidos ou renomeados", [(p, _era(d, p)) for d, p in res["movidos"]], "ciano",
+            nota="sem copiar de novo")
+    v.secao(e, "fora", "Tirados do espelho", [(r, "") for r in res["quarentena"]], "amarelo",
+            nota=f"saíram do Drive {e.s['ponto']} ficam na quarentena por {cfg['dias_quarentena']} dias")
+    if ctx["modo_orfaos"]:
+        v.secao(e, "fora", "Saíram do Drive", [(r, "") for r in res["orfaos"]], "amarelo",
+                nota="continuam no SSD")
+    v.secao(e, "falha", "Não copiados", [(r, m[:60]) for r, m in res["falhas"]], "vermelho")
+    v.secao(e, "falha", "Conteúdo diferente do Drive", [(r, "") for r in res["divergentes"]], "vermelho")
+
+    v.separador(e)
+    v.linha_final(e, severidade(ctx["codigo"]), frase(ctx))
+    notas = []
+    if res["nao_baixados"]:
+        notas.append(f"{v.plural(res['nao_baixados'], 'arquivo ainda não baixado', 'arquivos ainda não baixados')}"
+                     " pelo Google Drive ficou para depois (marque a pasta como 'Disponível offline').")
+    if res["orfaos"] and not ctx["quarentena_ativa"] and not ctx["modo_orfaos"]:
+        notas.append(f"{v.plural(len(res['orfaos']), 'arquivo saiu', 'arquivos saíram')} do Drive e "
+                     "continua(m) no SSD. Para tirá-los do espelho: --quarentena.")
+    if res["verificados"] is not None and not res["divergentes"]:
+        notas.append(f"Conteúdo conferido byte a byte em {v.plural(res['verificados'], 'arquivo', 'arquivos')}: idêntico.")
+    if res["migradas"]:
+        notas.append(f"A pasta '{PASTA_LEGADA}' agora se chama '{PASTA_VERSOES}'.")
+    for n in notas:
+        e.escrever("  " + e.c(f"{e.s['info']} {n}", "cinza"))
+
+    if ctx["inventario"]:
+        e.escrever()
+        e.escrever("  " + e.c("Guardados no SSD", "negrito"))
+        for chave, rotulo in (("versoes", "Versões antigas"), ("quarentena", "Quarentena")):
+            i = ctx["inventario"][chave]
+            if i["arquivos"]:
+                txt = f"{v.plural(i['arquivos'], 'arquivo', 'arquivos')} {e.s['ponto']} {v.fmt_bytes(i['bytes'])}"
+                if i["expira"]:
+                    txt += f" {e.s['ponto']} a mais antiga sai em {v.fmt_data(i['expira'])}"
+            else:
+                txt = "vazia"
+            e.escrever(f"    {rotulo:<17} {e.c(txt, 'cinza')}")
+    e.escrever()
+
+
+def abrir_historico(cfg):
+    candidatos = []
+    ssd = localizar_ssd(cfg) if cfg else None
+    if ssd:
+        candidatos.append(ssd / PASTA_SISTEMA / "historico.html")
+    candidatos.append(PASTA_LOCAL / "historico.html")
+    for p in candidatos:
+        if p.exists():
+            print(f"Abrindo {p}")
+            v.abrir(p)
+            return 0
+    print("Ainda não há histórico: ele é criado no primeiro backup.")
+    return 0
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Backup de mão única Google Drive -> SSD específico",
-        epilog="Códigos de saída: " + "; ".join(f"{k}={v}" for k, v in CODIGOS.items()))
+        epilog="Códigos de saída: " + "; ".join(f"{k}={v_}" for k, v_ in CODIGOS.items()))
     ap.add_argument("--registrar", metavar="LETRA", help="registra o SSD nessa letra como destino")
     ap.add_argument("--simular", action="store_true", help="mostra o que faria, sem alterar nada")
     ap.add_argument("--forcar", action="store_true", help="ignora a trava de segurança")
     ap.add_argument("--orfaos", action="store_true", help="só lista o que está no SSD e saiu do Drive")
     ap.add_argument("--quarentena", action="store_true",
-                    help="move os órfãos para _sync_ssd/versoes/ (nunca apaga)")
+                    help=f"move os órfãos para {PASTA_SISTEMA}/{PASTA_QUARENTENA}/ (nunca apaga)")
     ap.add_argument("--verificar", nargs="?", const=200, type=int, metavar="N",
                     help="após o backup, confere o hash de N arquivos (padrão 200; 0 = todos)")
     ap.add_argument("--baixar", action="store_true",
                     help="copia também arquivos que o Drive ainda não baixou (força download)")
     ap.add_argument("--status", action="store_true", help="mostra o resultado da última execução")
+    ap.add_argument("--historico", action="store_true", help="abre o histórico de execuções no navegador")
     ap.add_argument("--alertar-se-velho", type=int, metavar="DIAS",
                     help="se o SSD não estiver presente e o último backup tiver mais de DIAS dias, avisa")
     ap.add_argument("--config", metavar="ARQUIVO", help="caminho do sync_ssd_config.json")
+    saida = ap.add_mutually_exclusive_group()
+    saida.add_argument("--detalhado", action="store_true", help="saída técnica, hora em cada linha")
+    saida.add_argument("--silencioso", action="store_true",
+                       help="nada na tela; notificação do Windows se houver problema")
+    saida.add_argument("--json", action="store_true", help="resultado em JSON")
     ap.add_argument("--versao", action="version", version=f"sync_ssd {VERSAO}")
     a = ap.parse_args(argv)
+
+    modo = "json" if a.json else "silencioso" if a.silencioso else "detalhado" if a.detalhado else "tela"
+    log.ecoar = modo == "detalhado"
 
     caminho_config = resolver_config(a.config)
     if a.registrar:
@@ -789,23 +1164,46 @@ def main(argv=None):
         return 0
     if a.status:
         return mostrar_status()
-    if not caminho_config.exists():
-        print(f"SSD ainda não registrado ({caminho_config} não existe). "
-              "Rode: python sync_ssd.py --registrar D:")
-        return 10
-    cfg = carregar_config(caminho_config)
-    if not cfg.get("serial") or not cfg.get("id"):
-        print(f"{caminho_config} não tem serial/id. Rode: python sync_ssd.py --registrar D:")
-        return 10
 
-    lock = Lock(LOCK, cfg["horas_lock_velho"])
-    if not lock.adquirir():
-        log(f"Já existe uma execução em andamento ({LOCK}). Nada foi feito.")
-        return 7
-    try:
-        return executar(a, cfg)
-    finally:
-        lock.liberar()
+    cfg, codigo_previo = None, None
+    if caminho_config.exists():
+        cfg = carregar_config(caminho_config)
+        if not cfg.get("serial") or not cfg.get("id"):
+            codigo_previo = 10
+    else:
+        codigo_previo = 10
+    if a.historico:
+        return abrir_historico(cfg if codigo_previo is None else None)
+    if codigo_previo == 10:
+        log(f"SSD ainda não registrado ({caminho_config}). Rode: python sync_ssd.py --registrar D:")
+
+    tela = v.Estilo() if modo == "tela" else None
+    lock = None
+    if codigo_previo is None:
+        lock = Lock(LOCK, cfg["horas_lock_velho"])
+        if not lock.adquirir():
+            log(f"Já existe uma execução em andamento ({LOCK}). Nada foi feito.")
+            codigo_previo, lock = 7, None
+
+    if codigo_previo is not None:
+        ctx = contexto(a, cfg or dict(PADRAO))
+        ctx["codigo"] = codigo_previo
+    else:
+        try:
+            ctx = executar(a, cfg, tela)
+        finally:
+            lock.liberar()
+
+    if ctx["ssd"] and not ctx["simular"]:
+        v.registrar_historico(ctx["ssd"] / PASTA_SISTEMA, registro_historico(ctx), copias_html=[PASTA_LOCAL])
+
+    if modo == "json":
+        print(json.dumps(saida_json(ctx), ensure_ascii=False, indent=2))
+    elif modo == "tela":
+        mostrar_tela(tela, ctx)
+    elif modo == "silencioso" and ctx["codigo"] in NOTIFICAR:
+        v.notificar("Backup do SSD", frase(ctx))
+    return ctx["codigo"]
 
 
 if __name__ == "__main__":

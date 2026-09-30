@@ -7,6 +7,8 @@ com o Windows (serial do volume, letras de unidade) é substituída por um stub,
 então os testes rodam em qualquer sistema.
 """
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -17,6 +19,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import sync_ssd as s
+import visual_ssd as v
 
 
 def escrever(caminho, conteudo=b"x", mtime=None):
@@ -210,20 +213,27 @@ class TestFluxoCompleto(Base):
             "serial": "TESTE", "id": "id-teste", "origem": str(self.origem),
             "limite_abs": 3, "limite_pct": 0.5, "margem_espaco_gb": 0,
         }), encoding="utf-8")
-        self._orig = (s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL)
+        self._orig = (s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL, s.PASTA_LOCAL, v.notificar)
         s.localizar_ssd = lambda cfg: self.ssd if cfg["serial"] == "TESTE" else None
+        s.PASTA_LOCAL = self.tmp / "local"
         s.LOCK = self.tmp / "sync.lock"
         s.LOG_LOCAL = self.tmp / "local" / "sync.log"
         s.ESTADO_LOCAL = self.tmp / "local" / s.ARQ_ESTADO
+        self.notificacoes = []
+        v.notificar = lambda titulo, texto: self.notificacoes.append((titulo, texto)) or True
         escrever(self.ssd / s.PASTA_SISTEMA / s.ARQ_IDENTIDADE, b"id=id-teste")
 
     def tearDown(self):
-        s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL = self._orig
+        s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL, s.PASTA_LOCAL, v.notificar = self._orig
         super().tearDown()
 
     def rodar(self, *args):
         s.log.linhas.clear()
-        return s.main(["--config", str(self.config), *args])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            codigo = s.main(["--config", str(self.config), *args])
+        self.saida = buf.getvalue()
+        return codigo
 
     def test_backup_simples_e_versionamento(self):
         escrever(self.origem / "a.txt", b"v1", mtime=1_600_000_000)
@@ -242,7 +252,7 @@ class TestFluxoCompleto(Base):
         escrever(self.origem / "a.txt", b"v2 maior", mtime=1_600_000_500)
         self.assertEqual(self.rodar(), 0)
         self.assertEqual((self.ssd / "a.txt").read_bytes(), b"v2 maior")
-        versoes = list((self.ssd / s.PASTA_SISTEMA / "versoes").rglob("a.txt"))
+        versoes = list((self.ssd / s.PASTA_SISTEMA / s.PASTA_VERSOES).rglob("a.txt"))
         self.assertEqual(len(versoes), 1)
         self.assertEqual(versoes[0].read_bytes(), b"v1")
 
@@ -301,7 +311,8 @@ class TestFluxoCompleto(Base):
         self.assertEqual(self.rodar("--quarentena"), 0)
         self.assertFalse((self.ssd / "sai.txt").exists())
         self.assertTrue((self.ssd / "novo.txt").exists())
-        self.assertEqual(list((self.ssd / s.PASTA_SISTEMA / "versoes").rglob("sai.txt"))[0].read_bytes(), b"2")
+        self.assertEqual(list((self.ssd / s.PASTA_SISTEMA / s.PASTA_QUARENTENA).rglob("sai.txt"))[0].read_bytes(), b"2")
+        self.assertFalse((self.ssd / s.PASTA_SISTEMA / s.PASTA_VERSOES).exists())   # nada foi sobrescrito
 
     def test_verificar_hash_detecta_corrupcao(self):
         escrever(self.origem / "a.txt", b"integro", mtime=1_600_000_000)
@@ -323,6 +334,7 @@ class TestFluxoCompleto(Base):
         self.assertEqual(self.rodar("--alertar-se-velho", "7"), 9)     # de novo, dentro do cooldown
         est = json.loads(s.ESTADO_LOCAL.read_text(encoding="utf-8"))
         self.assertTrue(est.get("ultimo_alerta"))
+        self.assertEqual(len(self.notificacoes), 1)                    # cooldown: só uma notificação
 
     def test_lock_impede_execucao_concorrente(self):
         s.LOCK.write_text("123")
@@ -336,6 +348,128 @@ class TestFluxoCompleto(Base):
     def test_config_ausente(self):
         self.config.unlink()
         self.assertEqual(self.rodar(), 10)
+
+    # --------------------------------------------- pastas de guarda
+    def _pasta_datada(self, nome, dias_atras, arquivo="f.txt", conteudo=b"x"):
+        carimbo = (datetime.now() - timedelta(days=dias_atras)).strftime(s.FORMATO_CARIMBO)
+        return escrever(self.ssd / s.PASTA_SISTEMA / nome / carimbo / arquivo, conteudo).parent
+
+    def test_migra_pasta_legada_e_simulacao_nao_mexe(self):
+        escrever(self.origem / "a.txt", b"1")
+        legado = self.ssd / s.PASTA_SISTEMA / s.PASTA_LEGADA
+        escrever(legado / "2026-09-28_222030" / "Vida" / "x.md", b"velho")
+        escrever(legado / "2026-09-29_163650" / "relatorio.docx", b"v1")
+        escrever(self.ssd / s.PASTA_SISTEMA / s.PASTA_VERSOES / "2026-09-29_163650" / "outro.txt", b"ja estava")
+
+        self.assertEqual(self.rodar("--simular"), 0)
+        self.assertTrue(legado.exists())                                     # simulação não migra
+        self.assertIn("3 arquivos", self.saida)                              # mas o inventário já conta a pasta antiga
+
+        self.assertEqual(self.rodar(), 0)
+        novas = self.ssd / s.PASTA_SISTEMA / s.PASTA_VERSOES
+        self.assertFalse(legado.exists())
+        self.assertEqual((novas / "2026-09-28_222030" / "Vida" / "x.md").read_bytes(), b"velho")
+        self.assertEqual((novas / "2026-09-29_163650" / "relatorio.docx").read_bytes(), b"v1")        # mesclado
+        self.assertEqual((novas / "2026-09-29_163650" / "outro.txt").read_bytes(), b"ja estava")
+
+    def test_prazos_independentes_para_versoes_e_quarentena(self):
+        cfg = json.loads(self.config.read_text(encoding="utf-8"))
+        cfg.update(dias_versoes=90, dias_quarentena=120)
+        self.config.write_text(json.dumps(cfg), encoding="utf-8")
+        escrever(self.origem / "a.txt", b"1")
+        velha_versao = self._pasta_datada(s.PASTA_VERSOES, 100)
+        velha_quarentena = self._pasta_datada(s.PASTA_QUARENTENA, 100)
+        self.assertEqual(self.rodar(), 0)
+        self.assertFalse(velha_versao.exists())       # 100 > 90
+        self.assertTrue(velha_quarentena.exists())    # 100 < 120
+
+    def test_inventario(self):
+        pasta = self.ssd / s.PASTA_SISTEMA / s.PASTA_VERSOES
+        self.assertEqual(s.inventario(pasta, 90), {"arquivos": 0, "bytes": 0, "expira": None})
+        agora = datetime(2026, 9, 30, 12, 0)
+        escrever(pasta / "2026-09-28_222030" / "a.md", b"12345")
+        escrever(pasta / "2026-09-29_163650" / "sub" / "b.md", b"123")
+        escrever(pasta / "manual" / "ignorado.txt", b"xx")        # pasta sem carimbo: conta, mas não expira
+        inv = s.inventario(pasta, 90, agora=agora)
+        self.assertEqual((inv["arquivos"], inv["bytes"]), (3, 10))
+        self.assertEqual(inv["expira"], datetime(2026, 12, 27, 22, 20, 30))
+
+    # --------------------------------------------- modos de saída
+    def test_json(self):
+        escrever(self.origem / "p" / "novo.txt", b"abc")
+        self.assertEqual(self.rodar("--json"), 0)
+        d = json.loads(self.saida)
+        self.assertEqual((d["codigo"], d["resultado"]), (0, "ok"))
+        self.assertEqual(d["novos"], [{"caminho": os.path.join("p", "novo.txt"), "bytes": 3}])
+        self.assertEqual(d["atualizados"], [])
+        self.assertIn("versoes", d["inventario"])
+        self.assertIn("quarentena", d["inventario"])
+
+    def test_json_tambem_nos_erros(self):
+        s.localizar_ssd = lambda cfg: None
+        self.assertEqual(self.rodar("--json"), 2)
+        d = json.loads(self.saida)
+        self.assertEqual((d["codigo"], d["resultado"]), (2, "erro"))
+        self.assertIn("plugado", d["mensagem"])
+        self.config.unlink()
+        self.assertEqual(self.rodar("--json"), 10)
+        self.assertEqual(json.loads(self.saida)["codigo"], 10)
+
+    def test_silencioso_nao_imprime_e_so_notifica_problema(self):
+        escrever(self.origem / "a.txt", b"1")
+        self.assertEqual(self.rodar("--silencioso"), 0)
+        self.assertEqual(self.saida, "")
+        self.assertEqual(self.notificacoes, [])
+        for i in range(4):
+            escrever(self.origem / f"f{i}.txt", b"x")       # 4 novos > limite 3 e > 50%: trava
+        self.assertEqual(self.rodar("--silencioso"), 5)
+        self.assertEqual(self.saida, "")
+        self.assertEqual(len(self.notificacoes), 1)
+        self.assertIn("Trava de segurança", self.notificacoes[0][1])
+
+    def test_tela_padrao(self):
+        escrever(self.origem / "Obra" / "novo.md", b"abc")
+        self.assertEqual(self.rodar(), 0)
+        self.assertIn("Novos (1)", self.saida)
+        self.assertIn("Obra", self.saida)
+        self.assertIn("novo.md", self.saida)
+        self.assertIn("Tudo certo", self.saida)
+        self.assertIn("Versões antigas", self.saida)
+        self.assertNotIn("\033", self.saida)                 # fora de terminal: sem cor
+        self.assertNotIn("Início:", self.saida)              # formato técnico só no --detalhado
+
+    def test_tela_da_simulacao_e_dos_erros(self):
+        escrever(self.origem / "a.txt", b"1")
+        self.assertEqual(self.rodar("--simular"), 0)
+        self.assertIn("Simulação", self.saida)
+        s.localizar_ssd = lambda cfg: None
+        self.assertEqual(self.rodar(), 2)
+        self.assertIn("plugado", self.saida)
+
+    def test_detalhado_mostra_o_log(self):
+        escrever(self.origem / "a.txt", b"1")
+        self.assertEqual(self.rodar("--detalhado"), 0)
+        self.assertIn("Início:", self.saida)
+        self.assertIn("NOVO     a.txt", self.saida)
+
+    def test_ultimo_backup_vem_do_registro_mais_recente(self):
+        escrever(self.origem / "a.txt", b"1")
+        self.rodar()
+        s.ESTADO_LOCAL.unlink()                              # outro computador, ou estado local perdido
+        self.assertEqual(self.rodar("--simular"), 0)
+        self.assertIn("último backup agora mesmo", self.saida)
+
+    def test_historico_so_em_execucao_real(self):
+        escrever(self.origem / "a.txt", b"1")
+        hist = self.ssd / s.PASTA_SISTEMA / "historico.json"
+        self.rodar("--simular")
+        self.assertFalse(hist.exists())
+        self.rodar()
+        regs = json.loads(hist.read_text(encoding="utf-8"))
+        self.assertEqual(len(regs), 1)
+        self.assertEqual((regs[0]["tipo"], regs[0]["novos"], regs[0]["resultado"]), ("backup", 1, "ok"))
+        self.assertTrue((self.ssd / s.PASTA_SISTEMA / "historico.html").exists())
+        self.assertTrue((s.PASTA_LOCAL / "historico.html").exists())      # cópia local
 
 
 if __name__ == "__main__":

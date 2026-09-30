@@ -13,6 +13,7 @@
   "limite_abs": 300,
   "limite_pct": 0.25,
   "dias_versoes": 90,
+  "dias_quarentena": 90,
   "max_versoes_gb": 0,
   "margem_espaco_gb": 2,
   "caminhos_longos": true,

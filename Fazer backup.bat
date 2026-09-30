@@ -1,25 +1,12 @@
 @echo off
-rem Duplo clique: faz o backup Google Drive -> SSD e, em seguida, confere o resultado.
+rem Duplo clique: backup Google Drive -> SSD e, em seguida, a conferencia.
+rem --quarentena: o que foi apagado no Drive sai do espelho e fica guardado em _sync_ssd\quarentena.
 chcp 65001 >nul
 set PYTHONIOENCODING=utf-8
 cd /d "%~dp0"
-python sync_ssd.py
-set backup=%errorlevel%
-echo.
-if %backup% GTR 1 (
-    echo O backup nao rodou. Codigo %backup% - veja a mensagem acima.
-    goto fim
-)
-echo ---------------- Conferencia ----------------
+python sync_ssd.py --quarentena
+rem Codigos 0 e 1: o backup rodou (1 = alguns arquivos falharam). Acima disso, nao ha o que conferir.
+if %errorlevel% GTR 1 goto fim
 python conferir_ssd.py
-set conferencia=%errorlevel%
-echo.
-if %backup%==0 if %conferencia%==0 (
-    echo Backup concluido e conferido: SSD identico ao Drive.
-    goto fim
-)
-echo Atencao: backup com codigo %backup%, conferencia com codigo %conferencia%. Veja as mensagens acima.
-
 :fim
-echo.
 pause
