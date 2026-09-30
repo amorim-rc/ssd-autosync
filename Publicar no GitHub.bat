@@ -1,5 +1,5 @@
 @echo off
-rem Duplo clique: envia as mudancas desta pasta para github.com/amorim-rc/ssd-autosync.
+rem Duplo clique: envia as mudancas desta pasta para o repositorio GitHub dela (origin).
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
@@ -12,7 +12,7 @@ if %errorlevel%==0 (
 )
 
 rem Trava: o registro do SSD (serial e ID) nunca pode ir para o GitHub.
-python -c "import json,subprocess,sys; c=json.load(open('sync_ssd_config.json',encoding='utf-8')); n=subprocess.run(['git','diff','--cached','--name-only'],capture_output=True,text=True).stdout.split(); t=[v for v in (c.get('serial'),c.get('id')) if v]; r=subprocess.run(['git','grep','--cached','-l','-i','-F']+sum([['-e',v] for v in t],[]),capture_output=True,text=True).stdout.strip() if t else ''; sys.exit(1 if 'sync_ssd_config.json' in n or r else 0)" 2>nul
+python -c "import json,os,subprocess,sys; c=json.load(open('sync_ssd_config.json',encoding='utf-8')) if os.path.exists('sync_ssd_config.json') else {}; n=subprocess.run(['git','diff','--cached','--name-only'],capture_output=True,text=True).stdout.split(); t=[v for v in (c.get('serial'),c.get('id')) if v]; r=subprocess.run(['git','grep','--cached','-l','-i','-F']+sum([['-e',v] for v in t],[]),capture_output=True,text=True).stdout.strip() if t else ''; sys.exit(1 if 'sync_ssd_config.json' in n or r else 0)" 2>nul
 if errorlevel 1 (
     git reset --quiet
     echo.
@@ -24,7 +24,9 @@ if errorlevel 1 (
 echo Arquivos que serao enviados:
 git diff --cached --name-status
 echo.
-set /p ok=Enviar para o GitHub (repositorio PUBLICO)? [S/N]
+for /f "delims=" %%u in ('git remote get-url origin') do set repo=%%u
+echo Destino: %repo%
+set /p ok=Enviar para o GitHub? Se o repositorio for publico, qualquer pessoa vera. [S/N]
 if /i not "%ok%"=="S" (
     git reset --quiet
     echo Cancelado. Nada foi enviado.
@@ -39,7 +41,7 @@ if errorlevel 1 (
     echo O envio falhou. O commit ficou salvo aqui; peca ajuda para concluir.
 ) else (
     echo.
-    echo Publicado em https://github.com/amorim-rc/ssd-autosync
+    echo Publicado em %repo%
 )
 
 :fim
