@@ -156,7 +156,7 @@ def fmt_duracao(seg):
 
 
 def longo(p, ativar=True):
-    """Prefixo \\?\ para o Windows aceitar caminhos com mais de 260 caracteres."""
+    r"""Prefixo \\?\ para o Windows aceitar caminhos com mais de 260 caracteres."""
     s = str(p)
     if WINDOWS and ativar and not s.startswith("\\\\"):
         return "\\\\?\\" + s
