@@ -503,6 +503,19 @@ def politica(cfg):
     return p if p in POLITICAS else "perguntar"
 
 
+def descrever_regra(cfg):
+    """A regra de limpeza numa frase (começa em minúscula, para vir depois de 'Hoje: ')."""
+    dv = v.plural(cfg["dias_versoes"], "dia", "dias")
+    dq = v.plural(cfg["dias_quarentena"], "dia", "dias")
+    p = politica(cfg)
+    if p == "nunca":
+        return (f"nunca apaga nada. O prazo serve só de referência: {dv} para as versões antigas "
+                f"e {dq} para a quarentena.")
+    acao = "apaga sozinho" if p == "automatico" else "pergunta antes de apagar"
+    return (f"{acao} o que passar do prazo, que é de {dv} para as versões antigas "
+            f"e de {dq} para a quarentena.")
+
+
 def vencidos_ssd(sistema, cfg, agora=None):
     """O que venceu nas duas pastas de guarda. -> [{tipo, pasta, data, arquivos, bytes}]."""
     itens = []
@@ -1282,8 +1295,7 @@ def comando_limpar(cfg, e):
         itens = vencidos_ssd(sistema, cfg)
         e.escrever()
         e.escrever("  " + e.c(f"LIMPEZA DO QUE ESTÁ GUARDADO  {v.nome_ssd(ssd)}", "negrito"))
-        e.escrever("  " + e.c(f"Prazos: versões antigas {cfg['dias_versoes']} dias {e.s['ponto']} quarentena "
-                              f"{cfg['dias_quarentena']} dias {e.s['ponto']} hoje: {POLITICAS[politica(cfg)]}", "cinza"))
+        e.escrever("  " + e.c(f"Hoje: {descrever_regra(cfg)}", "cinza"))
         e.escrever()
         if not itens:
             invs = [inventario(sistema / PASTA_VERSOES, cfg["dias_versoes"]),
@@ -1327,8 +1339,7 @@ def configurar_limpeza(caminho_config, e):
     atual = politica(cfg)
     e.escrever()
     e.escrever("  " + e.c("LIMPEZA DO QUE ESTÁ GUARDADO NO SSD", "negrito"))
-    e.escrever("  " + e.c(f"Hoje: {POLITICAS[atual]} {e.s['ponto']} versões antigas {cfg['dias_versoes']} dias "
-                          f"{e.s['ponto']} quarentena {cfg['dias_quarentena']} dias", "cinza"))
+    e.escrever("  " + e.c(f"Hoje: {descrever_regra(cfg)}", "cinza"))
     e.escrever()
     if not _interativo():
         e.escrever("  " + e.c(f"{e.s['info']} Para mudar, dê dois cliques em Configurar limpeza.bat.", "cinza"))
@@ -1368,10 +1379,11 @@ def configurar_limpeza(caminho_config, e):
     if dias_q:
         bruto["dias_quarentena"] = dias_q
     salvar_config(caminho_config, bruto)
+    novo = dict(cfg, apagar_vencidos=nova, dias_versoes=dias_v or cfg["dias_versoes"],
+                dias_quarentena=dias_q or cfg["dias_quarentena"])
     e.escrever()
-    v.linha_final(e, "ok", f"Salvo: {POLITICAS[nova]} {e.s['ponto']} versões antigas "
-                           f"{dias_v or cfg['dias_versoes']} dias {e.s['ponto']} quarentena "
-                           f"{dias_q or cfg['dias_quarentena']} dias")
+    v.linha_final(e, "ok", "Salvo.")
+    e.escrever("  " + e.c(f"A partir de agora, o backup {descrever_regra(novo)}", "cinza"))
     if nova == "perguntar":
         e.escrever("  " + e.c(f"{e.s['info']} No backup agendado nada é apagado: você recebe um aviso para decidir.",
                               "cinza"))

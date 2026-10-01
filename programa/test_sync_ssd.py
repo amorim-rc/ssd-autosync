@@ -614,6 +614,17 @@ class TestLimpezaDoQueVenceu(BaseFluxo):
         self.assertEqual(self.rodar("--configurar-limpeza"), 0)
         self.assertNotIn("apagar_vencidos", json.loads(self.config.read_text(encoding="utf-8")))
         self.assertIn("Configurar limpeza.bat", self.saida)
+        self.assertIn("Hoje: apaga sozinho o que passar do prazo, que é de 90 dias para as versões "
+                      "antigas e de 90 dias para a quarentena.", self.saida)
+
+    def test_regra_em_portugues_para_cada_escolha(self):
+        cfg = dict(s.PADRAO, dias_versoes=30, dias_quarentena=1)
+        self.assertEqual(s.descrever_regra(dict(cfg, apagar_vencidos="perguntar")),
+                         "pergunta antes de apagar o que passar do prazo, que é de 30 dias para as "
+                         "versões antigas e de 1 dia para a quarentena.")
+        self.assertEqual(s.descrever_regra(dict(cfg, apagar_vencidos="nunca")),
+                         "nunca apaga nada. O prazo serve só de referência: 30 dias para as versões "
+                         "antigas e 1 dia para a quarentena.")
 
     def test_testar_notificacao(self):
         self.assertEqual(self.rodar("--testar-notificacao"), 0)
