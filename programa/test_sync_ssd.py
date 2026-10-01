@@ -203,8 +203,8 @@ class TestLimparVersoes(Base):
         self.assertTrue(v2.exists() and v3.exists())
 
 
-class TestFluxoCompleto(Base):
-    """Roda main() de ponta a ponta com o SSD 'encontrado' por um stub."""
+class BaseFluxo(Base):
+    """Prepara main() de ponta a ponta com o SSD 'encontrado' por um stub (sem testes próprios)."""
 
     def setUp(self):
         super().setUp()
@@ -234,6 +234,14 @@ class TestFluxoCompleto(Base):
             codigo = s.main(["--config", str(self.config), *args])
         self.saida = buf.getvalue()
         return codigo
+
+    def _pasta_datada(self, nome, dias_atras, arquivo="f.txt", conteudo=b"x"):
+        carimbo = (datetime.now() - timedelta(days=dias_atras)).strftime(s.FORMATO_CARIMBO)
+        return escrever(self.ssd / s.PASTA_SISTEMA / nome / carimbo / arquivo, conteudo).parent
+
+
+class TestFluxoCompleto(BaseFluxo):
+    """main() de ponta a ponta."""
 
     def test_backup_simples_e_versionamento(self):
         escrever(self.origem / "a.txt", b"v1", mtime=1_600_000_000)
@@ -350,10 +358,6 @@ class TestFluxoCompleto(Base):
         self.assertEqual(self.rodar(), 10)
 
     # --------------------------------------------- pastas de guarda
-    def _pasta_datada(self, nome, dias_atras, arquivo="f.txt", conteudo=b"x"):
-        carimbo = (datetime.now() - timedelta(days=dias_atras)).strftime(s.FORMATO_CARIMBO)
-        return escrever(self.ssd / s.PASTA_SISTEMA / nome / carimbo / arquivo, conteudo).parent
-
     def test_migra_pasta_legada_e_simulacao_nao_mexe(self):
         escrever(self.origem / "a.txt", b"1")
         legado = self.ssd / s.PASTA_SISTEMA / s.PASTA_LEGADA
@@ -470,6 +474,150 @@ class TestFluxoCompleto(Base):
         self.assertEqual((regs[0]["tipo"], regs[0]["novos"], regs[0]["resultado"]), ("backup", 1, "ok"))
         self.assertTrue((self.ssd / s.PASTA_SISTEMA / "historico.html").exists())
         self.assertTrue((s.PASTA_LOCAL / "historico.html").exists())      # cópia local
+
+
+class TestLimpezaDoQueVenceu(BaseFluxo):
+    """apagar_vencidos: automatico | perguntar | nunca, --limpar e --configurar-limpeza."""
+
+    def setUp(self):
+        super().setUp()
+        self._orig_entrada = (s._interativo, s.perguntar)
+        self.respostas = []
+        self.perguntas = []
+        s._interativo = lambda: True
+
+        def responder(prompt):
+            self.perguntas.append(prompt)
+            return self.respostas.pop(0) if self.respostas else ""
+        s.perguntar = responder
+        escrever(self.origem / "a.txt", b"1")
+        self.rodar()                                            # primeiro backup: SSD em dia
+        self.vencida = self._pasta_datada(s.PASTA_VERSOES, 100, conteudo=b"12345")
+        self.valida = self._pasta_datada(s.PASTA_QUARENTENA, 10)
+
+    def tearDown(self):
+        s._interativo, s.perguntar = self._orig_entrada
+        super().tearDown()
+
+    def politica(self, valor):
+        cfg = json.loads(self.config.read_text(encoding="utf-8"))
+        cfg["apagar_vencidos"] = valor
+        self.config.write_text(json.dumps(cfg), encoding="utf-8")
+
+    def test_vencidos_nao_apaga_e_respeita_teto(self):
+        pasta = self.ssd / s.PASTA_SISTEMA / s.PASTA_VERSOES
+        self.assertEqual(s.vencidos(pasta, 90), [self.vencida])
+        self.assertTrue(self.vencida.exists())
+        nova = self._pasta_datada(s.PASTA_VERSOES, 1, arquivo="g.txt", conteudo=b"x" * 100)
+        # 105 bytes guardados, teto 100: só a mais antiga (5 bytes) precisa sair
+        self.assertEqual(s.vencidos(pasta, 365, max_bytes=100), [self.vencida])
+        self.assertEqual(s.vencidos(pasta, 365, max_bytes=50), [self.vencida, nova])   # ainda não cabe: sai a próxima
+        self.assertTrue(nova.exists())
+
+    def test_automatico_apaga_sem_perguntar(self):
+        self.assertEqual(self.rodar(), 0)
+        self.assertFalse(self.vencida.exists())
+        self.assertTrue(self.valida.exists())
+        self.assertEqual(self.perguntas, [])
+
+    def test_politica_invalida_vira_perguntar(self):
+        self.assertEqual(s.politica({"apagar_vencidos": "talvez"}), "perguntar")
+        self.assertEqual(s.politica({}), "automatico")
+
+    def test_perguntar_e_responder_sim(self):
+        self.politica("perguntar")
+        self.respostas = ["s"]
+        self.assertEqual(self.rodar(), 0)
+        self.assertEqual(len(self.perguntas), 1)
+        self.assertIn("aguardam sua autorização", self.saida)
+        self.assertFalse(self.vencida.exists())
+        self.assertTrue(self.valida.exists())
+        self.assertIn("Apagado", self.saida)
+
+    def test_perguntar_e_responder_nao_mantem_e_volta_a_perguntar(self):
+        self.politica("perguntar")
+        self.respostas = ["n"]
+        self.rodar()
+        self.assertTrue(self.vencida.exists())
+        self.assertIn("Nada foi apagado", self.saida)
+        self.rodar()
+        self.assertEqual(len(self.perguntas), 2)
+
+    def test_perguntar_sem_terminal_nao_apaga_nem_pergunta(self):
+        self.politica("perguntar")
+        s._interativo = lambda: False
+        self.rodar()
+        self.assertTrue(self.vencida.exists())
+        self.assertEqual(self.perguntas, [])
+        self.assertIn("aguardam sua autorização", self.saida)
+
+    def test_perguntar_no_agendamento_notifica_uma_vez_por_dia(self):
+        self.politica("perguntar")
+        s._interativo = lambda: False
+        self.assertEqual(self.rodar("--silencioso"), 0)
+        self.assertEqual(self.saida, "")
+        self.assertTrue(self.vencida.exists())
+        self.assertEqual(len(self.notificacoes), 1)
+        self.assertIn("venceram o prazo", self.notificacoes[0][1])
+        self.rodar("--silencioso")
+        self.assertEqual(len(self.notificacoes), 1)              # mesmo dia: não repete
+
+    def test_nunca_nao_apaga_nem_pergunta(self):
+        self.politica("nunca")
+        self.rodar()
+        self.rodar("--silencioso")
+        self.assertTrue(self.vencida.exists())
+        self.assertEqual((self.perguntas, self.notificacoes), ([], []))
+
+    def test_tela_avisa_vencidos_com_limpeza_desligada(self):
+        self.politica("nunca")
+        self.rodar()
+        self.assertIn("limpeza automática desligada", self.saida)
+
+    def test_json_lista_vencidos(self):
+        self.politica("nunca")
+        self.rodar("--json")
+        d = json.loads(self.saida)
+        self.assertEqual(d["politica_limpeza"], "nunca")
+        self.assertEqual(len(d["vencidos"]), 1)
+        self.assertEqual((d["vencidos"][0]["tipo"], d["vencidos"][0]["bytes"]), ("versoes", 5))
+
+    def test_limpar_sem_backup(self):
+        self.politica("nunca")                                   # --limpar vale em qualquer política
+        self.respostas = ["s"]
+        self.assertEqual(self.rodar("--limpar"), 0)
+        self.assertFalse(self.vencida.exists())
+        self.assertTrue(self.valida.exists())
+        regs = json.loads((self.ssd / s.PASTA_SISTEMA / "historico.json").read_text(encoding="utf-8"))
+        self.assertEqual((regs[-1]["tipo"], regs[-1]["pastas"]), ("limpeza", 1))
+        self.assertEqual(self.rodar("--limpar"), 0)
+        self.assertIn("Nada passou do prazo", self.saida)
+        self.assertIn("próximo vencimento", self.saida)
+
+    def test_limpar_respondendo_nao(self):
+        self.respostas = ["n"]
+        self.rodar("--limpar")
+        self.assertTrue(self.vencida.exists())
+
+    def test_configurar_limpeza(self):
+        self.respostas = ["7", "2", "abc", "120", ""]           # opção inválida, depois 2; dias inválido, depois 120; Enter mantém
+        self.assertEqual(self.rodar("--configurar-limpeza"), 0)
+        cfg = json.loads(self.config.read_text(encoding="utf-8"))
+        self.assertEqual(cfg["apagar_vencidos"], "perguntar")
+        self.assertEqual(cfg["dias_versoes"], 120)
+        self.assertNotIn("dias_quarentena", cfg)                 # Enter manteve o padrão, nada gravado
+        self.assertEqual(cfg["serial"], "TESTE")                 # o resto do arquivo continua igual
+        self.assertIn("Salvo", self.saida)
+
+    def test_configurar_sem_terminal_so_mostra(self):
+        s._interativo = lambda: False
+        self.assertEqual(self.rodar("--configurar-limpeza"), 0)
+        self.assertNotIn("apagar_vencidos", json.loads(self.config.read_text(encoding="utf-8")))
+        self.assertIn("Configurar limpeza.bat", self.saida)
+
+    def test_testar_notificacao(self):
+        self.assertEqual(self.rodar("--testar-notificacao"), 0)
+        self.assertEqual(len(self.notificacoes), 1)
 
 
 if __name__ == "__main__":

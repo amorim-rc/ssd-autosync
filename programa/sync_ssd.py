@@ -29,6 +29,9 @@ Uso:
   python sync_ssd.py --verificar [N]       # backup + confere hash de N arquivos (0 = todos)
   python sync_ssd.py --status              # mostra o resultado da última execução
   python sync_ssd.py --historico           # abre o histórico de execuções no navegador
+  python sync_ssd.py --limpar              # o que venceu nas pastas de guarda, com confirmação
+  python sync_ssd.py --configurar-limpeza  # apagar o que vence: automático, perguntar ou nunca
+  python sync_ssd.py --testar-notificacao  # envia uma notificação de teste
   python sync_ssd.py --alertar-se-velho 7  # se o SSD não estiver plugado e o último
                                            # backup tiver mais de 7 dias, avisa na tela
 
@@ -87,6 +90,7 @@ PADRAO = {
     "limite_pct": 0.25,             # ...E mais que 25% do total -> aborta
     "dias_versoes": 90,             # versões antigas ficam por tantos dias
     "dias_quarentena": 90,          # arquivos em quarentena ficam por tantos dias
+    "apagar_vencidos": "automatico",   # o que passou do prazo: automatico | perguntar | nunca
     "max_versoes_gb": 0,            # teto de espaço para versões antigas (0 = sem teto)
     "margem_espaco_gb": 2,          # espaço livre mínimo que deve sobrar no SSD
     "caminhos_longos": True,        # usa o prefixo \\?\ para caminhos > 260 caracteres
@@ -445,39 +449,98 @@ def tamanho_pasta(pasta):
     return total
 
 
-def limpar_versoes(pasta_versoes, dias, max_bytes=0, agora=None):
-    """Remove pastas de versão mais velhas que `dias` (pela data no nome) e, se
-    `max_bytes` > 0, as mais antigas até o total caber no teto. -> nomes removidos."""
-    removidas = []
-    if not pasta_versoes.is_dir():
-        return removidas
-    datadas = []
-    for p in pasta_versoes.iterdir():
-        if not p.is_dir():
-            continue
-        try:
-            datadas.append((datetime.strptime(p.name[:17], FORMATO_CARIMBO), p))
-        except ValueError:
-            continue     # pasta que não é nossa: não mexe
-    datadas.sort()
+def _data_da_pasta(p):
+    """Data no nome de uma pasta de guarda ('2026-09-29_163650...'), ou None."""
+    try:
+        return datetime.strptime(p.name[:17], FORMATO_CARIMBO)
+    except ValueError:
+        return None
+
+
+def vencidos(pasta_guarda, dias, max_bytes=0, agora=None):
+    """Pastas datadas que passaram do prazo de `dias` (pela data no nome) e, se
+    `max_bytes` > 0, as mais antigas que estouram o teto. Não apaga nada.
+    Pastas sem data no nome não são nossas e nunca entram. -> [Path], mais antigas primeiro."""
+    if not pasta_guarda.is_dir():
+        return []
+    datadas = sorted((d, p) for p in pasta_guarda.iterdir()
+                     if p.is_dir() and (d := _data_da_pasta(p)) is not None)
     limite = (agora or datetime.now()) - timedelta(days=dias)
-    restantes = []
-    for data, p in datadas:
-        if data < limite:
-            shutil.rmtree(p, ignore_errors=True)
-            removidas.append(p.name)
-        else:
-            restantes.append(p)
+    saem = [p for d, p in datadas if d < limite]
+    restantes = [p for d, p in datadas if d >= limite]
     if max_bytes > 0 and restantes:
         tamanhos = {p: tamanho_pasta(p) for p in restantes}
         total = sum(tamanhos.values())
         for p in restantes:           # mais antigas primeiro
             if total <= max_bytes:
                 break
-            shutil.rmtree(p, ignore_errors=True)
+            saem.append(p)
             total -= tamanhos[p]
-            removidas.append(p.name)
+    return saem
+
+
+def limpar_versoes(pasta_versoes, dias, max_bytes=0, agora=None):
+    """Apaga o que `vencidos()` aponta. -> nomes removidos."""
+    removidas = []
+    for p in vencidos(pasta_versoes, dias, max_bytes, agora):
+        shutil.rmtree(p, ignore_errors=True)
+        removidas.append(p.name)
     return removidas
+
+
+# ----------------------------------------------- limpeza do que venceu
+POLITICAS = {
+    "automatico": "apaga sozinho depois do prazo",
+    "perguntar": "pergunta antes de apagar",
+    "nunca": "nunca apaga",
+}
+
+
+def politica(cfg):
+    """automatico | perguntar | nunca. Valor desconhecido vira 'perguntar' (o mais seguro
+    que ainda avisa)."""
+    p = str(cfg.get("apagar_vencidos", "automatico")).strip().lower()
+    return p if p in POLITICAS else "perguntar"
+
+
+def vencidos_ssd(sistema, cfg, agora=None):
+    """O que venceu nas duas pastas de guarda. -> [{tipo, pasta, data, arquivos, bytes}]."""
+    itens = []
+    for tipo, nome, dias, teto in (
+            ("versoes", PASTA_VERSOES, cfg["dias_versoes"], cfg["max_versoes_gb"] * 1024 ** 3),
+            ("quarentena", PASTA_QUARENTENA, cfg["dias_quarentena"], 0)):
+        for p in vencidos(Path(sistema) / nome, dias, teto, agora):
+            arquivos = sum(len(n) for _, _, n in os.walk(p))
+            itens.append({"tipo": tipo, "pasta": p, "data": _data_da_pasta(p),
+                          "arquivos": arquivos, "bytes": tamanho_pasta(p)})
+    return itens
+
+
+def apagar_vencidos(itens):
+    """Apaga as pastas e registra no log. -> (pastas apagadas, bytes)."""
+    n = total = 0
+    for i in itens:
+        shutil.rmtree(i["pasta"], ignore_errors=True)
+        if not i["pasta"].exists():
+            n += 1
+            total += i["bytes"]
+            log(f"Pasta de guarda vencida apagada: {i['tipo']}/{i['pasta'].name}")
+    return n, total
+
+
+def _interativo():
+    """Há alguém na janela para responder? (falso no agendamento e em pipes)"""
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def perguntar(prompt):
+    try:
+        return input(prompt)
+    except (EOFError, KeyboardInterrupt, OSError):
+        return ""
 
 
 def _mesclar_pasta(origem, destino):
@@ -837,10 +900,8 @@ def sincronizar(a, cfg, ssd, simular, estado, res, tela=None):
 
     codigo = 0
     if not simular:
-        removidas = limpar_versoes(sistema / PASTA_VERSOES, cfg["dias_versoes"], cfg["max_versoes_gb"] * 1024 ** 3)
-        removidas += limpar_versoes(sistema / PASTA_QUARENTENA, cfg["dias_quarentena"])
-        for nome in removidas:
-            log(f"Pasta de guarda expirada removida: {nome}")
+        if politica(cfg) == "automatico":
+            apagar_vencidos(vencidos_ssd(sistema, cfg))
         if a.verificar is not None:
             n, divergentes = verificar_hashes(arq_o, arq_d, origem, destino, a.verificar, tol, L)
             for r in divergentes:
@@ -871,6 +932,7 @@ def contexto(a, cfg):
         "inicio": datetime.now(), "duracao": 0.0, "ultimo_backup": None,
         "simular": bool(a.simular or a.orfaos), "modo_orfaos": bool(a.orfaos),
         "quarentena_ativa": bool(a.quarentena), "baixar": bool(a.baixar),
+        "politica": politica(cfg), "vencidos": [], "vai_perguntar": False,
     }
 
 
@@ -928,6 +990,10 @@ def executar(a, cfg, tela=None):
                                          inventario(sistema / PASTA_LEGADA, cfg["dias_versoes"])),
             "quarentena": inventario(sistema / PASTA_QUARENTENA, cfg["dias_quarentena"]),
         }
+        try:
+            ctx["vencidos"] = vencidos_ssd(sistema, cfg)
+        except OSError:
+            ctx["vencidos"] = []
         ctx.update(codigo=codigo, duracao=time.time() - inicio)
     return ctx
 
@@ -1024,6 +1090,10 @@ def saida_json(ctx):
         "verificacao": (None if res["verificados"] is None
                         else {"conferidos": res["verificados"], "divergentes": res["divergentes"]}),
         "inventario": _inventario_json(ctx["inventario"]),
+        "politica_limpeza": ctx["politica"],
+        "vencidos": [{"tipo": i["tipo"], "pasta": i["pasta"].name,
+                      "guardada_em": i["data"].isoformat(timespec="seconds"),
+                      "arquivos": i["arquivos"], "bytes": i["bytes"]} for i in ctx["vencidos"]],
     }
 
 
@@ -1037,6 +1107,7 @@ def registro_historico(ctx):
         "falhas": len(res["falhas"]), "bytes": res["bytes_copiados"],
         "duracao_seg": round(ctx["duracao"], 1),
         "inventario": _inventario_json(ctx["inventario"]),
+        "vencidos": len(ctx["vencidos"]), "politica_limpeza": ctx["politica"],
     }
 
 
@@ -1110,7 +1181,215 @@ def mostrar_tela(e, ctx):
             else:
                 txt = "vazia"
             e.escrever(f"    {rotulo:<17} {e.c(txt, 'cinza')}")
+        venc = ctx["vencidos"]
+        if venc and not ctx["vai_perguntar"]:
+            qtd = (v.plural(len(venc), "pasta passou", "pastas passaram")
+                   + f" do prazo ({v.fmt_bytes(sum(i['bytes'] for i in venc))})")
+            if ctx["politica"] == "nunca":
+                msg = f"{qtd} {e.s['ponto']} limpeza automática desligada; para limpar: Limpar guardados.bat"
+            elif ctx["politica"] == "automatico":
+                msg = f"{qtd} e será(ão) apagada(s) no próximo backup"
+            else:
+                msg = f"{qtd} e aguardam sua autorização (Limpar guardados.bat ou o próximo Fazer backup)"
+            e.escrever("    " + e.c(f"{e.s['aviso']} {msg}", "amarelo"))
     e.escrever()
+
+
+def descrever_vencidos(e, itens):
+    for tipo, rotulo in (("versoes", "Versões antigas"), ("quarentena", "Quarentena")):
+        grupo = [i for i in itens if i["tipo"] == tipo]
+        if not grupo:
+            continue
+        datas = sorted(v.fmt_data(i["data"]) for i in grupo)
+        if len(datas) == 1:
+            quando = f"guardada em {datas[0]}"
+        elif len(datas) == 2:
+            quando = f"guardadas em {datas[0]} e {datas[1]}"
+        else:
+            quando = f"guardadas de {datas[0]} a {datas[-1]}"
+        txt = (f"{v.plural(len(grupo), 'pasta', 'pastas')} {e.s['ponto']} "
+               f"{v.plural(sum(i['arquivos'] for i in grupo), 'arquivo', 'arquivos')} {e.s['ponto']} "
+               f"{v.fmt_bytes(sum(i['bytes'] for i in grupo))} ({quando})")
+        e.escrever(f"      {rotulo:<17} {e.c(txt, 'cinza')}")
+
+
+def _gravar_log_desde(indice, ssd):
+    """Grava nos logs as linhas acrescentadas depois que o log da execução já foi salvo."""
+    novas = Log()
+    novas.linhas = log.linhas[indice:]
+    if novas.linhas:
+        novas.gravar(LOG_LOCAL, ssd / PASTA_SISTEMA / "logs" / f"{datetime.now():%Y-%m}.log")
+
+
+def perguntar_e_apagar(e, ssd, itens, volta):
+    """Mostra o que venceu e pede confirmação. -> True se apagou."""
+    e.escrever("  " + e.c(f"{e.s['aviso']} Passaram do prazo e aguardam sua autorização:", "amarelo", "negrito"))
+    descrever_vencidos(e, itens)
+    e.escrever()
+    resposta = perguntar("  Apagar agora? [S/N] ").strip().lower()
+    if resposta not in ("s", "sim", "y", "yes"):
+        resto = " A pergunta volta no próximo backup." if volta else ""
+        e.escrever("  " + e.c(f"{e.s['info']} Nada foi apagado.{resto}", "cinza"))
+        e.escrever()
+        return False
+    inicio = len(log.linhas)
+    n, total = apagar_vencidos(itens)
+    _gravar_log_desde(inicio, ssd)
+    texto = f"Apagado: {v.plural(n, 'pasta', 'pastas')} ({v.fmt_bytes(total)})"
+    v.linha_final(e, "ok" if n == len(itens) else "aviso",
+                  texto if n == len(itens) else f"{texto}; {len(itens) - n} não puderam ser apagadas")
+    e.escrever()
+    v.registrar_historico(ssd / PASTA_SISTEMA, {
+        "tipo": "limpeza", "quando": datetime.now().isoformat(timespec="seconds"), "codigo": 0,
+        "resultado": "ok" if n == len(itens) else "aviso", "frase": texto, "pastas": n, "bytes": total,
+    }, copias_html=[PASTA_LOCAL])
+    return True
+
+
+def avisar_vencidos(ctx):
+    """Agendamento com 'perguntar': não apaga; notifica no máximo uma vez por dia."""
+    est = ler_estado(ESTADO_LOCAL)
+    agora = datetime.now()
+    try:
+        if agora - datetime.fromisoformat(est["ultimo_aviso_vencidos"]) < timedelta(hours=24):
+            return
+    except (KeyError, TypeError, ValueError):
+        pass
+    n = len(ctx["vencidos"])
+    v.notificar("Backup do SSD",
+                f"Itens guardados no SSD venceram o prazo ({v.plural(n, 'pasta', 'pastas')}). "
+                "Abra o Fazer backup ou o Limpar guardados para decidir.")
+    est["ultimo_aviso_vencidos"] = agora.isoformat(timespec="seconds")
+    gravar_estado(est, ESTADO_LOCAL)
+
+
+def comando_limpar(cfg, e):
+    """--limpar: o que venceu, com confirmação, sem fazer backup."""
+    ssd = localizar_ssd(cfg)
+    if not ssd:
+        e.escrever()
+        v.linha_final(e, "erro", FRASES[2])
+        e.escrever()
+        return 2
+    lock = Lock(LOCK, cfg["horas_lock_velho"])
+    if not lock.adquirir():
+        e.escrever()
+        v.linha_final(e, "erro", FRASES[7])
+        e.escrever()
+        return 7
+    try:
+        sistema = ssd / PASTA_SISTEMA
+        itens = vencidos_ssd(sistema, cfg)
+        e.escrever()
+        e.escrever("  " + e.c(f"LIMPEZA DO QUE ESTÁ GUARDADO  {v.nome_ssd(ssd)}", "negrito"))
+        e.escrever("  " + e.c(f"Prazos: versões antigas {cfg['dias_versoes']} dias {e.s['ponto']} quarentena "
+                              f"{cfg['dias_quarentena']} dias {e.s['ponto']} hoje: {POLITICAS[politica(cfg)]}", "cinza"))
+        e.escrever()
+        if not itens:
+            invs = [inventario(sistema / PASTA_VERSOES, cfg["dias_versoes"]),
+                    inventario(sistema / PASTA_QUARENTENA, cfg["dias_quarentena"])]
+            datas = [i["expira"] for i in invs if i["expira"]]
+            v.linha_final(e, "ok", "Nada passou do prazo.")
+            prox = (f"O próximo vencimento é em {v.fmt_data(min(datas))}." if datas
+                    else "Não há nada guardado nas pastas de versões antigas e quarentena.")
+            e.escrever("  " + e.c(f"{e.s['info']} {prox}", "cinza"))
+            e.escrever()
+            return 0
+        if not _interativo():
+            e.escrever("  " + e.c(f"{e.s['aviso']} Passaram do prazo:", "amarelo"))
+            descrever_vencidos(e, itens)
+            e.escrever("  " + e.c(f"{e.s['info']} Nada foi apagado: para confirmar, use o Limpar guardados.bat.", "cinza"))
+            e.escrever()
+            return 0
+        perguntar_e_apagar(e, ssd, itens, volta=False)
+        return 0
+    finally:
+        lock.liberar()
+
+
+ROTULOS_POLITICA = {
+    "automatico": "Apagar sozinho (automático)",
+    "perguntar": "Perguntar antes de apagar",
+    "nunca": "Nunca apagar",
+}
+
+
+def configurar_limpeza(caminho_config, e):
+    """--configurar-limpeza: menu para escolher a política e os prazos."""
+    if not caminho_config.exists():
+        e.escrever()
+        v.linha_final(e, "erro", FRASES[10])
+        e.escrever()
+        return 10
+    bruto = json.loads(caminho_config.read_text(encoding="utf-8"))
+    cfg = dict(PADRAO)
+    cfg.update(bruto)
+    atual = politica(cfg)
+    e.escrever()
+    e.escrever("  " + e.c("LIMPEZA DO QUE ESTÁ GUARDADO NO SSD", "negrito"))
+    e.escrever("  " + e.c(f"Hoje: {POLITICAS[atual]} {e.s['ponto']} versões antigas {cfg['dias_versoes']} dias "
+                          f"{e.s['ponto']} quarentena {cfg['dias_quarentena']} dias", "cinza"))
+    e.escrever()
+    if not _interativo():
+        e.escrever("  " + e.c(f"{e.s['info']} Para mudar, dê dois cliques em Configurar limpeza.bat.", "cinza"))
+        e.escrever()
+        return 0
+
+    opcoes = list(POLITICAS)
+    e.escrever("  O que fazer com o que passar do prazo?")
+    for n, chave in enumerate(opcoes, 1):
+        marca = e.c("  (atual)", "cinza") if chave == atual else ""
+        e.escrever(f"    {n}  {ROTULOS_POLITICA[chave]}{marca}")
+    e.escrever()
+    while True:
+        r = perguntar("  Escolha [1/2/3, Enter mantém]: ").strip()
+        if r == "":
+            nova = atual
+            break
+        if r in ("1", "2", "3"):
+            nova = opcoes[int(r) - 1]
+            break
+        e.escrever("  Digite 1, 2 ou 3.")
+
+    def pedir_dias(rotulo, chave):
+        while True:
+            r = perguntar(f"  Prazo {rotulo}, em dias [{cfg[chave]}]: ").strip()
+            if r == "":
+                return None
+            if r.isdigit() and int(r) >= 1:
+                return int(r)
+            e.escrever("  Digite um número de dias (1 ou mais), ou Enter para manter.")
+
+    dias_v = pedir_dias("das versões antigas", "dias_versoes")
+    dias_q = pedir_dias("da quarentena", "dias_quarentena")
+    bruto["apagar_vencidos"] = nova
+    if dias_v:
+        bruto["dias_versoes"] = dias_v
+    if dias_q:
+        bruto["dias_quarentena"] = dias_q
+    salvar_config(caminho_config, bruto)
+    e.escrever()
+    v.linha_final(e, "ok", f"Salvo: {POLITICAS[nova]} {e.s['ponto']} versões antigas "
+                           f"{dias_v or cfg['dias_versoes']} dias {e.s['ponto']} quarentena "
+                           f"{dias_q or cfg['dias_quarentena']} dias")
+    if nova == "perguntar":
+        e.escrever("  " + e.c(f"{e.s['info']} No backup agendado nada é apagado: você recebe um aviso para decidir.",
+                              "cinza"))
+    e.escrever()
+    return 0
+
+
+def testar_notificacao(e):
+    ok = v.notificar("Backup do SSD", "Teste: se você está lendo isto, as notificações do backup funcionam.")
+    e.escrever()
+    if ok:
+        v.linha_final(e, "ok", "Notificação enviada.")
+        e.escrever("  " + e.c(f"{e.s['info']} Se ela não apareceu no canto da tela, abra a central (Windows + N) e "
+                              "confira se o 'Não incomodar' está ligado.", "cinza"))
+    else:
+        v.linha_final(e, "erro", "Não consegui enviar a notificação.")
+    e.escrever()
+    return 0 if ok else 1
 
 
 def abrir_historico(cfg):
@@ -1144,6 +1423,11 @@ def main(argv=None):
                     help="copia também arquivos que o Drive ainda não baixou (força download)")
     ap.add_argument("--status", action="store_true", help="mostra o resultado da última execução")
     ap.add_argument("--historico", action="store_true", help="abre o histórico de execuções no navegador")
+    ap.add_argument("--limpar", action="store_true",
+                    help="mostra o que venceu nas pastas de guarda e pergunta se apaga (sem fazer backup)")
+    ap.add_argument("--configurar-limpeza", action="store_true",
+                    help="escolhe se o que vence é apagado sozinho, com autorização ou nunca")
+    ap.add_argument("--testar-notificacao", action="store_true", help="envia uma notificação de teste")
     ap.add_argument("--alertar-se-velho", type=int, metavar="DIAS",
                     help="se o SSD não estiver presente e o último backup tiver mais de DIAS dias, avisa")
     ap.add_argument("--config", metavar="ARQUIVO", help="caminho do sync_ssd_config.json")
@@ -1164,6 +1448,10 @@ def main(argv=None):
         return 0
     if a.status:
         return mostrar_status()
+    if a.testar_notificacao:
+        return testar_notificacao(v.Estilo())
+    if a.configurar_limpeza:
+        return configurar_limpeza(caminho_config, v.Estilo())
 
     cfg, codigo_previo = None, None
     if caminho_config.exists():
@@ -1174,6 +1462,11 @@ def main(argv=None):
         codigo_previo = 10
     if a.historico:
         return abrir_historico(cfg if codigo_previo is None else None)
+    if a.limpar:
+        if codigo_previo is None:
+            return comando_limpar(cfg, v.Estilo())
+        print(FRASES[10])
+        return 10
     if codigo_previo == 10:
         log(f"SSD ainda não registrado ({caminho_config}). Rode: python sync_ssd.py --registrar D:")
 
@@ -1197,12 +1490,20 @@ def main(argv=None):
     if ctx["ssd"] and not ctx["simular"]:
         v.registrar_historico(ctx["ssd"] / PASTA_SISTEMA, registro_historico(ctx), copias_html=[PASTA_LOCAL])
 
+    pendente = bool(ctx["vencidos"]) and ctx["politica"] == "perguntar" and not ctx["simular"]
+    ctx["vai_perguntar"] = pendente and modo == "tela" and _interativo()
+
     if modo == "json":
         print(json.dumps(saida_json(ctx), ensure_ascii=False, indent=2))
     elif modo == "tela":
         mostrar_tela(tela, ctx)
-    elif modo == "silencioso" and ctx["codigo"] in NOTIFICAR:
-        v.notificar("Backup do SSD", frase(ctx))
+        if ctx["vai_perguntar"]:
+            perguntar_e_apagar(tela, ctx["ssd"], ctx["vencidos"], volta=True)
+    elif modo == "silencioso":
+        if ctx["codigo"] in NOTIFICAR:
+            v.notificar("Backup do SSD", frase(ctx))
+        if pendente:
+            avisar_vencidos(ctx)
     return ctx["codigo"]
 
 

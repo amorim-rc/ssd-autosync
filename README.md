@@ -10,17 +10,25 @@ Um segundo script, independente, **confere o resultado**: compara todos os arqui
 
 ## Arquivos
 
-| Arquivo | Para quê |
-|---|---|
-| `sync_ssd.py` | O backup. |
-| `conferir_ssd.py` | A conferência: só leitura, diz se o SSD está idêntico ao Drive. |
-| `visual_ssd.py` | Apresentação compartilhada: tela, notificação do Windows e histórico. Não tem lógica de comparação. |
-| `Fazer backup.bat` | Duplo clique: backup (com quarentena) seguido de conferência. |
-| `Simular backup.bat` | Duplo clique: mostra o que o backup faria, sem copiar nada. |
-| `Conferir SSD.bat` | Duplo clique: só a conferência. |
-| `Ver histórico.bat` | Duplo clique: abre o histórico no navegador. |
-| `sync_ssd_config.example.json` | Modelo de configuração. O `sync_ssd_config.json` real é criado pelo `--registrar` e fica fora do Git. |
-| `test_*.py` | Testes. |
+Na pasta principal ficam só os atalhos que você clica. O programa fica na pasta `programa`, que você não precisa abrir.
+
+```
+SyncSSD\
+├── Fazer backup.bat          backup (com quarentena) seguido de conferência
+├── Simular backup.bat        mostra o que o backup faria, sem copiar nada
+├── Conferir SSD.bat          só a conferência
+├── Limpar guardados.bat      o que passou do prazo nas pastas de guarda, com confirmação
+├── Configurar limpeza.bat    apagar o que vence: sozinho, com autorização ou nunca
+├── Ver histórico.bat         abre o histórico no navegador
+├── README.md
+└── programa\
+    ├── sync_ssd.py                    o backup
+    ├── conferir_ssd.py                a conferência (só leitura, código de comparação próprio)
+    ├── visual_ssd.py                  apresentação: tela, notificação, histórico
+    ├── sync_ssd_config.example.json   modelo de configuração
+    ├── sync_ssd_config.json           a sua configuração (criada pelo --registrar; fora do Git)
+    └── test_*.py                      testes
+```
 
 ---
 
@@ -49,7 +57,7 @@ Um segundo script, independente, **confere o resultado**: compara todos os arqui
 
 ## Instalação (para quem fez fork)
 
-1. Clone ou baixe o repositório em uma pasta fixa, por exemplo `C:\Ferramentas\sync_ssd\`.
+1. Clone ou baixe o repositório em uma pasta fixa, por exemplo `C:\Ferramentas\sync_ssd\`, e abra um terminal na pasta `programa` dentro dela. Os comandos deste README são rodados de lá.
 2. Copie `sync_ssd_config.example.json` para `sync_ssd_config.json` e ajuste pelo menos `origem`. Ou pule esta etapa e deixe o `--registrar` criar o arquivo com os padrões.
 3. Plugue o SSD e registre-o (troque `D:` pela letra dele):
 
@@ -83,9 +91,11 @@ Um segundo script, independente, **confere o resultado**: compara todos os arqui
 
 Os `.bat` da pasta rodam tudo com dois cliques e deixam a janela aberta com o resultado até você apertar uma tecla:
 
-- **`Fazer backup.bat`**: backup com `--quarentena` e, se ele rodou, a conferência.
+- **`Fazer backup.bat`**: backup com `--quarentena` e, se ele rodou, a conferência. Se a limpeza estiver em "perguntar" e algo tiver vencido, pergunta no fim se pode apagar.
 - **`Simular backup.bat`**: o que o backup faria, sem copiar.
 - **`Conferir SSD.bat`**: só a conferência.
+- **`Limpar guardados.bat`**: mostra o que passou do prazo em versões antigas e quarentena e pergunta se apaga. Funciona com qualquer escolha de limpeza.
+- **`Configurar limpeza.bat`**: um menu para escolher o que acontece com o que passa do prazo e mudar os prazos.
 - **`Ver histórico.bat`**: abre o histórico no navegador.
 
 Para ter um botão na área de trabalho: botão direito no `.bat` → *Mostrar mais opções* → *Enviar para* → *Área de trabalho (criar atalho)*.
@@ -137,6 +147,9 @@ python sync_ssd.py --verificar [N]       backup + confere o SHA-256 de N arquivo
 python sync_ssd.py --baixar              copia também arquivos que o Drive ainda não baixou
 python sync_ssd.py --status              resultado da última execução
 python sync_ssd.py --historico           abre o histórico no navegador
+python sync_ssd.py --limpar              mostra o que venceu nas pastas de guarda e pergunta se apaga
+python sync_ssd.py --configurar-limpeza  menu: apagar o que vence sozinho, com autorização ou nunca
+python sync_ssd.py --testar-notificacao  envia uma notificação de teste do Windows
 python sync_ssd.py --alertar-se-velho 7  se o SSD não estiver plugado e o último backup tiver
                                          mais de 7 dias, mostra uma notificação (no máximo 1x/dia)
 python sync_ssd.py --config ARQUIVO      usa outro sync_ssd_config.json
@@ -190,13 +203,36 @@ São duas pastas separadas, para que dê para saber só de olhar no Explorer o q
 
 Dentro de cada pasta datada, a estrutura de pastas é a mesma do espelho. **Para recuperar, copie o arquivo de volta** com o Explorer. A data no nome da pasta é *quando o backup guardou*; a data do arquivo lá dentro é *de quando ele é*.
 
-Vencido o prazo, a pasta datada inteira é apagada no backup seguinte. `max_versoes_gb` limita também o espaço das versões antigas.
+O que acontece quando o prazo vence depende da escolha de limpeza (próxima seção). `max_versoes_gb` limita também o espaço das versões antigas, e segue a mesma escolha.
 
 Versões até a 2.0 guardavam os dois tipos juntos em `_sync_ssd\versoes\`. Na primeira execução real da 2.1, essa pasta é movida automaticamente para `versoes-antigas\` (não há como separar o que era quarentena).
 
+## Limpeza do que está guardado
+
+Você escolhe o que acontece com o que passa do prazo, nas duas pastas de guarda:
+
+| Escolha | Valor em `apagar_vencidos` | O que acontece |
+|---|---|---|
+| **Apagar sozinho** (padrão) | `automatico` | o backup apaga o que venceu, sem perguntar, inclusive no agendamento |
+| **Perguntar antes** | `perguntar` | só apaga com a sua confirmação |
+| **Nunca apagar** | `nunca` | não apaga nem pergunta; você limpa quando quiser |
+
+**Para mudar, dê dois cliques em `Configurar limpeza.bat`.** O menu mostra a escolha atual, pede 1, 2 ou 3 e os prazos (Enter mantém o que está). Quem preferir pode editar `apagar_vencidos`, `dias_versoes` e `dias_quarentena` em `programa\sync_ssd_config.json`.
+
+Como cada escolha se comporta:
+
+- **`perguntar`, pelo `Fazer backup.bat`:** no fim do backup aparece o que venceu (quantas pastas, quantos arquivos, tamanho, quando foram guardadas) e a pergunta *Apagar agora? [S/N]*. Com N, nada é apagado, e a pergunta volta no próximo backup.
+- **`perguntar`, no agendamento:** como não há janela para perguntar, **nada é apagado**. Você recebe uma notificação dizendo que há itens vencidos, no máximo uma vez por dia, e decide pelo `Fazer backup.bat` ou pelo `Limpar guardados.bat`.
+- **`nunca`:** nada é apagado e nada é perguntado. A tela do backup e o histórico avisam quando há pastas vencidas.
+- **`Limpar guardados.bat`** (ou `--limpar`) funciona com qualquer escolha: mostra o que venceu e pergunta. Se nada venceu, diz quando vence o próximo.
+
+> **No agendamento, o padrão é apagar sozinho.** Se você quer autorizar cada limpeza, escolha "Perguntar antes" no `Configurar limpeza.bat`: o agendamento passa a só avisar, e quem apaga é você.
+
+Toda limpeza confirmada fica registrada no log e no histórico.
+
 ## Histórico
 
-Toda execução real (backup ou conferência; simulações não) acrescenta um registro a `_sync_ssd\historico.json` no SSD, que guarda as 200 mais recentes, e regenera `historico.html` ao lado dele. A página mostra o último backup, a última conferência, o que está guardado em versões antigas e em quarentena, e uma tabela com todas as execuções. Uma cópia da página fica em `%LOCALAPPDATA%\SyncSSD\historico.html`, para abrir mesmo com o SSD desplugado.
+Toda execução real (backup, conferência ou limpeza; simulações não) acrescenta um registro a `_sync_ssd\historico.json` no SSD, que guarda as 200 mais recentes, e regenera `historico.html` ao lado dele. A página mostra o último backup, a última conferência, o que está guardado em versões antigas e em quarentena, e uma tabela com todas as execuções. Uma cópia da página fica em `%LOCALAPPDATA%\SyncSSD\historico.html`, para abrir mesmo com o SSD desplugado.
 
 Para abrir: `Ver histórico.bat` ou `python sync_ssd.py --historico`.
 
@@ -242,7 +278,7 @@ Divergências logo após um backup costumam ser arquivos editados durante a exec
 
 ## Configuração
 
-O arquivo `sync_ssd_config.json` fica ao lado do script. Se não existir ali, o script procura em `%LOCALAPPDATA%\SyncSSD\`. Qualquer chave omitida usa o valor padrão.
+O arquivo `sync_ssd_config.json` fica ao lado do script, na pasta `programa`. Se não existir ali, o script procura em `%LOCALAPPDATA%\SyncSSD\`. Qualquer chave omitida usa o valor padrão.
 
 | Chave | Padrão | Descrição |
 |---|---|---|
@@ -256,6 +292,7 @@ O arquivo `sync_ssd_config.json` fica ao lado do script. Se não existir ali, o 
 | `limite_pct` | `0.25` | ...**e** isso for mais que 25% do total. As duas condições precisam valer. |
 | `dias_versoes` | `90` | Por quantos dias as versões antigas ficam guardadas. |
 | `dias_quarentena` | `90` | Por quantos dias os arquivos em quarentena ficam guardados. |
+| `apagar_vencidos` | `automatico` | O que fazer com o que passou do prazo: `automatico`, `perguntar` ou `nunca`. Valor desconhecido vale como `perguntar`. Mais fácil de mudar pelo `Configurar limpeza.bat`. |
 | `max_versoes_gb` | `0` | Teto de espaço para as versões antigas. Ao passar, as mais antigas saem primeiro. `0` = sem teto. |
 | `margem_espaco_gb` | `2` | Espaço que deve sobrar livre no SSD depois do backup. |
 | `caminhos_longos` | `true` | Usa o prefixo `\\?\` para aceitar caminhos com mais de 260 caracteres. Desligue se algum caminho de rede se comportar mal. |
@@ -294,10 +331,14 @@ No computador, em `%LOCALAPPDATA%\SyncSSD\`, ficam o log local, o `ultimo_result
 A forma mais simples é rodar a cada 30 minutos. Quando o SSD não está plugado o script sai em menos de um segundo com código 2, então o custo é zero. Use `pythonw.exe` (não abre janela) e `--silencioso` (você só é avisado quando há problema). A conferência roda em seguida se o backup terminar com código 0; o Agendador não abre o comando na pasta do script, então use caminhos completos:
 
 ```bat
-schtasks /Create /TN "SyncSSD" /SC MINUTE /MO 30 /TR "cmd /c \"\"C:\Python312\pythonw.exe\" \"C:\Ferramentas\sync_ssd\sync_ssd.py\" --quarentena --silencioso --alertar-se-velho 7 && \"C:\Python312\pythonw.exe\" \"C:\Ferramentas\sync_ssd\conferir_ssd.py\" --silencioso\""
+schtasks /Create /TN "SyncSSD" /SC MINUTE /MO 30 /TR "cmd /c \"\"C:\Python312\pythonw.exe\" \"C:\Ferramentas\sync_ssd\programa\sync_ssd.py\" --quarentena --silencioso --alertar-se-velho 7 && \"C:\Python312\pythonw.exe\" \"C:\Ferramentas\sync_ssd\programa\conferir_ssd.py\" --silencioso\""
 ```
 
 Com `--alertar-se-velho 7`, se você ficar uma semana sem plugar o SSD aparece uma notificação, no máximo uma por dia.
+
+O agendamento segue a escolha de limpeza: com o padrão (`automatico`) ele apaga o que venceu; com `perguntar` ele só avisa (veja [Limpeza do que está guardado](#limpeza-do-que-está-guardado)).
+
+Para conferir se as notificações aparecem na sua tela, rode `python sync_ssd.py --testar-notificacao`.
 
 Uma vez por mês vale rodar `python sync_ssd.py --quarentena --verificar` e olhar o resultado.
 
@@ -313,6 +354,8 @@ Uma vez por mês vale rodar `python sync_ssd.py --quarentena --verificar` e olha
 
 **Editei um arquivo e quero a versão de antes.** Está em `_sync_ssd\versoes-antigas\<data>\`, onde a data é a do backup que guardou a versão. Há uma pasta por backup; procure pela mais recente que tenha o arquivo.
 
+**As notificações não aparecem.** Rode `python sync_ssd.py --testar-notificacao`. Se a mensagem de teste não surgir no canto da tela, abra a central de notificações (Windows + N): se ela estiver lá, o "Não incomodar" está ligado e o Windows guarda os avisos sem mostrá-los. Desligue-o, ou em *Configurações → Sistema → Notificações* permita que o Windows PowerShell (o remetente dos avisos) notifique mesmo no "Não incomodar".
+
 **O Drive está em modo "stream" e o backup pulou milhares de arquivos.** No Google Drive para Desktop, clique com o botão direito na pasta e marque "Disponível offline", ou troque para o modo "espelhar". `--baixar` força a cópia, mas vai baixar tudo.
 
 **Renomeei uma pasta grande e a trava disparou.** Isso não deve acontecer: movidos são detectados (mesmo tamanho, mesma data, conteúdo conferido no início e no fim do arquivo) e não contam para a trava. Se disparar mesmo assim, rode `--simular` para ver o motivo e `--forcar` se estiver tudo certo.
@@ -323,13 +366,15 @@ Uma vez por mês vale rodar `python sync_ssd.py --quarentena --verificar` e olha
 
 ## Testes
 
+Dentro da pasta `programa`:
+
 ```bash
 python -m unittest -v
 ```
 
 Só biblioteca padrão.
 
-- `test_sync_ssd.py`: varredura, comparação, detecção de movidos, cópia atômica, versões antigas, quarentena, prazos independentes, migração da pasta `versoes`, inventário, trava, espaço, lock, histórico, e os quatro modos de saída (tela sem cor fora do terminal, `--detalhado`, `--silencioso` com notificação só em problema, `--json` também nos erros).
+- `test_sync_ssd.py`: varredura, comparação, detecção de movidos, cópia atômica, versões antigas, quarentena, prazos independentes, migração da pasta `versoes`, inventário, trava, espaço, lock, histórico, os quatro modos de saída (tela sem cor fora do terminal, `--detalhado`, `--silencioso` com notificação só em problema, `--json` também nos erros) e a limpeza (as três escolhas, a pergunta S/N, o aviso diário no agendamento, `--limpar`, o menu de configuração).
 - `test_conferir_ssd.py`: cada tipo de divergência, exclusões, códigos de saída, os modos de saída, o registro no histórico, garante que a conferência não altera o espelho, e roda backup + conferência em sequência exigindo que concordem.
 - `test_visual_ssd.py`: formatação em português, agrupamento por pasta, fallback sem cor e sem símbolos, limite e escape do histórico.
 

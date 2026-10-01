@@ -113,6 +113,19 @@ class TestHistorico(unittest.TestCase):
         tabela = html[html.index("<tbody>"):]
         self.assertLess(tabela.index("perigo"), tabela.index("antigo"))
 
+    def test_limpeza_e_vencidos_pendentes(self):
+        backup = {"tipo": "backup", "quando": "2026-09-30T10:00:00", "codigo": 0, "resultado": "ok",
+                  "frase": "Tudo certo", "vencidos": 2, "politica_limpeza": "perguntar"}
+        html = v.gerar_html([backup])
+        self.assertIn("Passaram do prazo", html)
+        self.assertIn("2 pastas", html)
+        limpeza = {"tipo": "limpeza", "quando": "2026-09-30T11:00:00", "codigo": 0, "resultado": "ok",
+                   "frase": "Apagado: 2 pastas (74,0 KB)", "pastas": 2, "bytes": 75776}
+        html = v.gerar_html([backup, limpeza])
+        self.assertIn("Limpeza", html)
+        self.assertIn("2 pastas apagadas", html)
+        self.assertNotIn("Passaram do prazo", html)          # a limpeza depois do backup resolveu
+
     def test_json_corrompido_recomeca(self):
         pasta = self.tmp / "s"
         pasta.mkdir()

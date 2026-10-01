@@ -320,7 +320,13 @@ def registrar_historico(pasta_json, registro, copias_html=()):
         pass
 
 
+TIPOS_HISTORICO = {"backup": "Backup", "conferencia": "Conferência", "limpeza": "Limpeza"}
+
+
 def _detalhe(r):
+    if r.get("tipo") == "limpeza":
+        return (plural(r.get("pastas", 0), "pasta apagada", "pastas apagadas")
+                + f" · {fmt_bytes(r.get('bytes', 0))}")
     if r.get("tipo") == "conferencia":
         partes = [plural(r.get("arquivos_drive", 0), "arquivo conferido", "arquivos conferidos"),
                   plural(r.get("divergencias", 0), "divergência", "divergências")]
@@ -336,6 +342,8 @@ def _detalhe(r):
                 partes.append(plural(r[chave], sing, plur))
         if r.get("bytes"):
             partes.append(fmt_bytes(r["bytes"]))
+        if r.get("vencidos"):
+            partes.append(plural(r["vencidos"], "pasta vencida", "pastas vencidas") + " guardada(s)")
     return " · ".join(partes)
 
 
@@ -353,7 +361,7 @@ def gerar_html(registros):
     for r in reversed(registros):
         res = r.get("resultado", "erro")
         res = res if res in icone else "erro"
-        tipo = "Conferência" if r.get("tipo") == "conferencia" else "Backup"
+        tipo = TIPOS_HISTORICO.get(r.get("tipo"), "Backup")
         dur = r.get("duracao_seg")
         linhas.append(
             f"<tr class='{res}'><td class='quando'>{esc(_quando(r))}</td><td>{tipo}</td>"
@@ -388,6 +396,16 @@ def gerar_html(registros):
             val, sub = "vazia", "nada guardado"
         cartoes.append(f"<div class='cartao'><div class='rot'>{titulo}</div>"
                        f"<div class='val'>{esc(val)}</div><div class='sub'>{esc(sub)}</div></div>")
+
+    # Vencidos pendentes: vale o último backup, a menos que uma limpeza tenha vindo depois.
+    ub = ultimo["backup"]
+    ul = next((r for r in reversed(registros) if r.get("tipo") == "limpeza"), None)
+    if ub and ub.get("vencidos") and not (ul and str(ul.get("quando", "")) > str(ub.get("quando", ""))):
+        sub = ("limpeza automática desligada" if ub.get("politica_limpeza") == "nunca"
+               else "aguardando sua autorização")
+        cartoes.append(f"<div class='cartao aviso'><div class='rot'>Passaram do prazo</div>"
+                       f"<div class='val'>⚠ {esc(plural(ub['vencidos'], 'pasta', 'pastas'))}</div>"
+                       f"<div class='sub'>{esc(sub)} · Limpar guardados.bat</div></div>")
 
     gerado = fmt_data_hora(datetime.now())
     return f"""<!doctype html>

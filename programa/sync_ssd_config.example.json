@@ -14,6 +14,7 @@
   "limite_pct": 0.25,
   "dias_versoes": 90,
   "dias_quarentena": 90,
+  "apagar_vencidos": "automatico",
   "max_versoes_gb": 0,
   "margem_espaco_gb": 2,
   "caminhos_longos": true,
