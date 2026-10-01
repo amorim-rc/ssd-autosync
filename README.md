@@ -386,3 +386,7 @@ A parte que fala com o Windows (serial do volume, notificação) é substituída
 - Arquivos abertos com bloqueio exclusivo (por exemplo `.pst` do Outlook) falham na cópia e aparecem em "Não copiados". São copiados na próxima execução.
 - Dois arquivos na origem que diferem só por maiúsculas/minúsculas colidem no Windows. O Drive permite isso; o script copia o último que encontrar.
 - A barra de progresso avança arquivo a arquivo; um vídeo muito grande deixa a barra parada até terminar de copiar.
+
+## Licença
+
+[MIT](LICENSE).
