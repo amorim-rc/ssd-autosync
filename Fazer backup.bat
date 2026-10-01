@@ -4,9 +4,9 @@ rem --quarentena: o que foi apagado no Drive sai do espelho e fica guardado em _
 chcp 65001 >nul
 set PYTHONIOENCODING=utf-8
 cd /d "%~dp0"
-python sync_ssd.py --quarentena
+python programa\sync_ssd.py --quarentena
 rem Codigos 0 e 1: o backup rodou (1 = alguns arquivos falharam). Acima disso, nao ha o que conferir.
 if %errorlevel% GTR 1 goto fim
-python conferir_ssd.py
+python programa\conferir_ssd.py
 :fim
 pause

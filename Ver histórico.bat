@@ -3,5 +3,5 @@ rem Duplo clique: abre no navegador o historico dos backups e conferencias.
 chcp 65001 >nul
 set PYTHONIOENCODING=utf-8
 cd /d "%~dp0"
-python sync_ssd.py --historico
+python programa\sync_ssd.py --historico
 if errorlevel 1 pause
