@@ -1,4 +1,4 @@
-# sync_ssd
+# guarda_ssd
 
 Backup de mão única da pasta local do **Google Drive para Desktop** (ou de qualquer pasta do Windows) para **um SSD externo específico**. Python puro, sem dependências.
 
