@@ -1,4 +1,6 @@
 # identifica o SEU SSD: versione só o .example
+guarda_ssd_config.json
+# nome usado até a 2.1
 sync_ssd_config.json
 
 # saída local do script

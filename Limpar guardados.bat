@@ -3,5 +3,5 @@ rem Duplo clique: mostra o que passou do prazo nas versoes antigas e na quarente
 chcp 65001 >nul
 set PYTHONIOENCODING=utf-8
 cd /d "%~dp0"
-python programa\sync_ssd.py --limpar
+python programa\guarda_ssd.py --limpar
 pause

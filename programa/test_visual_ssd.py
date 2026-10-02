@@ -81,6 +81,34 @@ class TestEstilo(unittest.TestCase):
         self.assertEqual(buf.getvalue(), "")
 
 
+class TestMigrarPasta(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="visual_ssd_test_"))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_move_e_mescla_sem_sobrescrever(self):
+        antiga, nova = self.tmp / "SyncSSD", self.tmp / "GuardaSSD"
+        (antiga / "sub").mkdir(parents=True)
+        (antiga / "sub" / "a.txt").write_text("a")
+        (antiga / "comum.txt").write_text("antigo")
+        nova.mkdir()
+        (nova / "comum.txt").write_text("novo")
+        self.assertEqual(v.migrar_pasta(antiga, nova), 1)                 # só "sub" foi movida
+        self.assertEqual((nova / "sub" / "a.txt").read_text(), "a")
+        self.assertEqual((nova / "comum.txt").read_text(), "novo")
+        self.assertTrue((antiga / "comum.txt").exists())                  # o conflito fica onde estava
+
+    def test_pasta_antiga_inexistente_ou_esvaziada(self):
+        self.assertEqual(v.migrar_pasta(self.tmp / "nao_existe", self.tmp / "nova"), 0)
+        antiga = self.tmp / "velha"
+        antiga.mkdir()
+        (antiga / "x.txt").write_text("x")
+        self.assertEqual(v.migrar_pasta(antiga, self.tmp / "nova"), 1)
+        self.assertFalse(antiga.exists())                                 # vazia: removida
+
+
 class TestHistorico(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="visual_ssd_test_"))
@@ -89,7 +117,7 @@ class TestHistorico(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_limite_de_registros_e_html(self):
-        pasta = self.tmp / "ssd" / "_sync_ssd"          # ainda não existe
+        pasta = self.tmp / "ssd" / "_guarda_ssd"        # ainda não existe
         copia = self.tmp / "local"
         for i in range(205):
             v.registrar_historico(pasta, {"tipo": "backup", "quando": f"2026-09-30T10:{i // 60:02}:{i % 60:02}",

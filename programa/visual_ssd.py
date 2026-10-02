@@ -1,5 +1,5 @@
 """
-visual_ssd.py - Apresentação compartilhada pelo sync_ssd.py e pelo conferir_ssd.py.
+visual_ssd.py - Apresentação compartilhada pelo guarda_ssd.py e pelo conferir_ssd.py.
 
 Só apresentação e registro: estilo do terminal (cores, símbolos, fallback),
 formatação em português, seções agrupadas por pasta, barra de progresso,
@@ -262,8 +262,8 @@ def nome_ssd(raiz):
 _SCRIPT_TOAST = r"""
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
-$t = [Security.SecurityElement]::Escape($env:SYNC_SSD_TITULO)
-$m = [Security.SecurityElement]::Escape($env:SYNC_SSD_TEXTO)
+$t = [Security.SecurityElement]::Escape($env:GUARDA_SSD_TITULO)
+$m = [Security.SecurityElement]::Escape($env:GUARDA_SSD_TEXTO)
 $x = New-Object Windows.Data.Xml.Dom.XmlDocument
 $x.LoadXml("<toast><visual><binding template='ToastGeneric'><text>$t</text><text>$m</text></binding></visual></toast>")
 $app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
@@ -275,7 +275,7 @@ def notificar(titulo, texto):
     """Notificação no canto da tela (toast). Se falhar, caixa de mensagem. -> bool."""
     if not WINDOWS:
         return False
-    env = dict(os.environ, SYNC_SSD_TITULO=titulo, SYNC_SSD_TEXTO=texto)
+    env = dict(os.environ, GUARDA_SSD_TITULO=titulo, GUARDA_SSD_TEXTO=texto)
     try:
         r = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
@@ -452,6 +452,30 @@ td.det {{ color:var(--suave) }}
 </tbody></table></div>
 </main></body></html>
 """
+
+
+def migrar_pasta(antiga, nova):
+    """Move o conteúdo de `antiga` para `nova` sem sobrescrever nada: o que já existe
+    em `nova` fica onde estava. Remove `antiga` se ela ficar vazia. -> itens movidos."""
+    antiga, nova = Path(antiga), Path(nova)
+    if not antiga.is_dir():
+        return 0
+    nova.mkdir(parents=True, exist_ok=True)
+    movidos = 0
+    for item in list(antiga.iterdir()):
+        alvo = nova / item.name
+        if alvo.exists():
+            continue
+        try:
+            os.replace(item, alvo)
+            movidos += 1
+        except OSError:
+            pass
+    try:
+        antiga.rmdir()
+    except OSError:
+        pass
+    return movidos
 
 
 def abrir(caminho):

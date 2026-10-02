@@ -63,11 +63,12 @@ from pathlib import Path
 
 import visual_ssd as v
 
-VERSAO = "2.1"
+VERSAO = "2.2"
 WINDOWS = os.name == "nt"
 
 # ---------------------------------------------------------------- configuração
-PASTA_SISTEMA = "_guarda_ssd"        # na raiz do SSD: identidade, logs, versões
+PASTA_SISTEMA = "_guarda_ssd"      # na raiz do SSD: identidade, logs, versões
+PASTA_SISTEMA_LEGADA = "_sync_ssd" # nome usado até a 2.1 (o programa se chamava sync_ssd); migrado
 PASTA_VERSOES = "versoes-antigas"  # dentro de PASTA_SISTEMA: versão anterior de arquivos sobrescritos
 PASTA_QUARENTENA = "quarentena"    # dentro de PASTA_SISTEMA: arquivos que saíram da origem
 PASTA_LEGADA = "versoes"           # nome usado até a 2.0 (migrado para PASTA_VERSOES)
@@ -117,8 +118,10 @@ CODIGOS = {
 }
 
 AQUI = Path(__file__).resolve().parent
-PASTA_LOCAL = Path(os.environ.get("LOCALAPPDATA", str(AQUI))) / "SyncSSD"
+PASTA_LOCAL = Path(os.environ.get("LOCALAPPDATA", str(AQUI))) / "GuardaSSD"
+PASTA_LOCAL_LEGADA = Path(os.environ.get("LOCALAPPDATA", str(AQUI))) / "SyncSSD"   # até a 2.1
 CONFIG_PADRAO = AQUI / "guarda_ssd_config.json"
+CONFIG_LEGADO = AQUI / "sync_ssd_config.json"                                       # até a 2.1
 LOG_LOCAL = PASTA_LOCAL / "sync.log"
 ESTADO_LOCAL = PASTA_LOCAL / ARQ_ESTADO
 LOCK = PASTA_LOCAL / "sync.lock"
@@ -215,18 +218,53 @@ def unidades():
     return saida
 
 
+def sistema_de(ssd):
+    """A pasta de sistema no SSD. Enquanto a pasta de nome antigo (_sync_ssd) não for
+    migrada, é ela que vale; depois, sempre a nova."""
+    nova = Path(ssd) / PASTA_SISTEMA
+    antiga = Path(ssd) / PASTA_SISTEMA_LEGADA
+    return antiga if not nova.exists() and antiga.is_dir() else nova
+
+
+def migrar_pasta_sistema(ssd):
+    """Renomeia _sync_ssd para _guarda_ssd no SSD, se for o caso. -> True se renomeou."""
+    nova = Path(ssd) / PASTA_SISTEMA
+    antiga = Path(ssd) / PASTA_SISTEMA_LEGADA
+    if antiga.is_dir() and not nova.exists():
+        os.replace(antiga, nova)
+        return True
+    return False
+
+
+def migrar_nomes_antigos():
+    """Até a 2.1 o programa se chamava sync_ssd. Leva a pasta local e o arquivo de
+    configuração para os nomes novos, sem sobrescrever nada. -> avisos para a tela."""
+    avisos = []
+    if v.migrar_pasta(PASTA_LOCAL_LEGADA, PASTA_LOCAL):
+        avisos.append(f"A pasta local {PASTA_LOCAL_LEGADA.name} agora se chama {PASTA_LOCAL.name}.")
+    for velho, novo in ((CONFIG_LEGADO, CONFIG_PADRAO),
+                        (PASTA_LOCAL / CONFIG_LEGADO.name, PASTA_LOCAL / CONFIG_PADRAO.name)):
+        if velho.exists() and not novo.exists():
+            try:
+                os.replace(velho, novo)
+                avisos.append(f"O arquivo {velho.name} agora se chama {novo.name}.")
+            except OSError:
+                pass
+    return avisos
+
+
 def localizar_ssd(cfg):
     """Procura em todas as letras o volume com serial e identidade corretos."""
     for raiz in unidades():
         serial, _ = info_volume(raiz)
         if serial != cfg["serial"]:
             continue
-        ident = Path(raiz) / PASTA_SISTEMA / ARQ_IDENTIDADE
-        try:
-            if cfg["id"] in ident.read_text(encoding="utf-8"):
-                return Path(raiz)
-        except OSError:
-            pass
+        for pasta in (PASTA_SISTEMA, PASTA_SISTEMA_LEGADA):
+            try:
+                if cfg["id"] in (Path(raiz) / pasta / ARQ_IDENTIDADE).read_text(encoding="utf-8"):
+                    return Path(raiz)
+            except OSError:
+                pass
         log(f"AVISO: {raiz} tem o serial certo mas não tem a identidade. Ignorado.")
     return None
 
@@ -243,6 +281,7 @@ def registrar(letra, caminho_config, forcar):
         if cfg.get("serial"):
             sys.exit(f"Já existe um SSD registrado em {caminho_config}.\n"
                      "Para trocar o disco de destino, rode de novo com --forcar.")
+    migrar_pasta_sistema(raiz)
     ident = Path(raiz) / PASTA_SISTEMA / ARQ_IDENTIDADE
     ident.parent.mkdir(exist_ok=True)
     id_ = str(uuid.uuid4())
@@ -575,7 +614,7 @@ def _mesclar_pasta(origem, destino):
 
 
 def migrar_pasta_legada(sistema):
-    """Até a 2.0, versões antigas e quarentena ficavam juntas em _guarda_ssd/versoes/.
+    """Até a 2.0, versões antigas e quarentena ficavam juntas em <pasta de sistema>/versoes/.
     Não há como separá-las depois; tudo vai para versoes-antigas/. -> pastas migradas."""
     legado = Path(sistema) / PASTA_LEGADA
     if not legado.is_dir():
@@ -759,7 +798,7 @@ def novo_resultado():
 def sincronizar(a, cfg, ssd, simular, estado, res, tela=None):
     L = cfg["caminhos_longos"]
     tol = cfg["tolerancia_seg"]
-    sistema = ssd / PASTA_SISTEMA
+    sistema = sistema_de(ssd)
     destino = ssd / cfg["pasta_destino"] if cfg["pasta_destino"] else ssd
     origem = Path(cfg["origem"])
 
@@ -778,7 +817,7 @@ def sincronizar(a, cfg, ssd, simular, estado, res, tela=None):
     log(f"Início{' (SIMULAÇÃO)' if simular else ''}: {origem} -> {destino}  [guarda_ssd {VERSAO}]")
     excluido = excluidor(cfg["excluir"])
     arq_o, erros_o = varrer(origem, excluido, caminhos_longos=L)
-    arq_d, erros_d = varrer(destino, excluido, pular_raiz=[PASTA_SISTEMA], caminhos_longos=L)
+    arq_d, erros_d = varrer(destino, excluido, pular_raiz=[PASTA_SISTEMA, PASTA_SISTEMA_LEGADA], caminhos_longos=L)
     for e in erros_o:
         log(f"ERRO leitura origem: {e}")
     for e in erros_d:
@@ -946,6 +985,7 @@ def contexto(a, cfg):
         "simular": bool(a.simular or a.orfaos), "modo_orfaos": bool(a.orfaos),
         "quarentena_ativa": bool(a.quarentena), "baixar": bool(a.baixar),
         "politica": politica(cfg), "vencidos": [], "vai_perguntar": False,
+        "avisos": [],                     # renomeações de versões anteriores, para a tela
     }
 
 
@@ -973,10 +1013,18 @@ def executar(a, cfg, tela=None):
         ctx.update(codigo=codigo, duracao=time.time() - inicio)
         return ctx
     ctx["ssd"] = ssd
+    if not simular:
+        try:
+            if migrar_pasta_sistema(ssd):
+                msg = f"A pasta {PASTA_SISTEMA_LEGADA} no SSD agora se chama {PASTA_SISTEMA}."
+                log(msg)
+                ctx["avisos"].append(msg)
+        except OSError as ex:
+            log(f"AVISO: não consegui renomear {PASTA_SISTEMA_LEGADA} para {PASTA_SISTEMA}: {ex}")
     # O SSD também guarda o último resultado; vale o mais recente dos dois
     # (o estado local pode ser de outro computador, ou ter sido apagado).
     datas = [d for d in (ctx["ultimo_backup"],
-                         _data_ultimo_backup(ler_estado(ssd / PASTA_SISTEMA / ARQ_ESTADO))) if d]
+                         _data_ultimo_backup(ler_estado(sistema_de(ssd) / ARQ_ESTADO))) if d]
     ctx["ultimo_backup"] = max(datas) if datas else None
 
     estado.update(inicio=datetime.now().isoformat(timespec="seconds"), simulacao=simular, codigo=None)
@@ -993,11 +1041,11 @@ def executar(a, cfg, tela=None):
                       duracao_seg=round(time.time() - inicio, 1), codigo=codigo)
         if not simular and codigo in (0, 1, 8):
             estado["ultimo_backup"] = estado["fim"]
-        destinos_estado = [ESTADO_LOCAL] + ([] if simular else [ssd / PASTA_SISTEMA / ARQ_ESTADO])
+        destinos_estado = [ESTADO_LOCAL] + ([] if simular else [sistema_de(ssd) / ARQ_ESTADO])
         gravar_estado(estado, *destinos_estado)
-        log_ssd = ssd / PASTA_SISTEMA / "logs" / f"{datetime.now():%Y-%m}.log"
+        log_ssd = sistema_de(ssd) / "logs" / f"{datetime.now():%Y-%m}.log"
         log.gravar(LOG_LOCAL, *([] if simular else [log_ssd]))
-        sistema = ssd / PASTA_SISTEMA
+        sistema = sistema_de(ssd)
         ctx["inventario"] = {       # a pasta legada só existe até a primeira execução real
             "versoes": somar_inventarios(inventario(sistema / PASTA_VERSOES, cfg["dias_versoes"]),
                                          inventario(sistema / PASTA_LEGADA, cfg["dias_versoes"])),
@@ -1179,6 +1227,7 @@ def mostrar_tela(e, ctx):
         notas.append(f"Conteúdo conferido byte a byte em {v.plural(res['verificados'], 'arquivo', 'arquivos')}: idêntico.")
     if res["migradas"]:
         notas.append(f"A pasta '{PASTA_LEGADA}' agora se chama '{PASTA_VERSOES}'.")
+    notas.extend(ctx["avisos"])
     for n in notas:
         e.escrever("  " + e.c(f"{e.s['info']} {n}", "cinza"))
 
@@ -1231,7 +1280,7 @@ def _gravar_log_desde(indice, ssd):
     novas = Log()
     novas.linhas = log.linhas[indice:]
     if novas.linhas:
-        novas.gravar(LOG_LOCAL, ssd / PASTA_SISTEMA / "logs" / f"{datetime.now():%Y-%m}.log")
+        novas.gravar(LOG_LOCAL, sistema_de(ssd) / "logs" / f"{datetime.now():%Y-%m}.log")
 
 
 def perguntar_e_apagar(e, ssd, itens, volta):
@@ -1252,7 +1301,7 @@ def perguntar_e_apagar(e, ssd, itens, volta):
     v.linha_final(e, "ok" if n == len(itens) else "aviso",
                   texto if n == len(itens) else f"{texto}; {len(itens) - n} não puderam ser apagadas")
     e.escrever()
-    v.registrar_historico(ssd / PASTA_SISTEMA, {
+    v.registrar_historico(sistema_de(ssd), {
         "tipo": "limpeza", "quando": datetime.now().isoformat(timespec="seconds"), "codigo": 0,
         "resultado": "ok" if n == len(itens) else "aviso", "frase": texto, "pastas": n, "bytes": total,
     }, copias_html=[PASTA_LOCAL])
@@ -1291,7 +1340,11 @@ def comando_limpar(cfg, e):
         e.escrever()
         return 7
     try:
-        sistema = ssd / PASTA_SISTEMA
+        try:
+            migrar_pasta_sistema(ssd)
+        except OSError:
+            pass
+        sistema = sistema_de(ssd)
         itens = vencidos_ssd(sistema, cfg)
         e.escrever()
         e.escrever("  " + e.c(f"LIMPEZA DO QUE ESTÁ GUARDADO  {v.nome_ssd(ssd)}", "negrito"))
@@ -1408,7 +1461,7 @@ def abrir_historico(cfg):
     candidatos = []
     ssd = localizar_ssd(cfg) if cfg else None
     if ssd:
-        candidatos.append(ssd / PASTA_SISTEMA / "historico.html")
+        candidatos.append(sistema_de(ssd) / "historico.html")
     candidatos.append(PASTA_LOCAL / "historico.html")
     for p in candidatos:
         if p.exists():
@@ -1454,6 +1507,9 @@ def main(argv=None):
     modo = "json" if a.json else "silencioso" if a.silencioso else "detalhado" if a.detalhado else "tela"
     log.ecoar = modo == "detalhado"
 
+    avisos_iniciais = migrar_nomes_antigos()      # quem vinha da versão chamada sync_ssd
+    for aviso in avisos_iniciais:
+        log(aviso)
     caminho_config = resolver_config(a.config)
     if a.registrar:
         registrar(a.registrar, caminho_config, a.forcar)
@@ -1498,9 +1554,10 @@ def main(argv=None):
             ctx = executar(a, cfg, tela)
         finally:
             lock.liberar()
+    ctx["avisos"] = avisos_iniciais + ctx["avisos"]
 
     if ctx["ssd"] and not ctx["simular"]:
-        v.registrar_historico(ctx["ssd"] / PASTA_SISTEMA, registro_historico(ctx), copias_html=[PASTA_LOCAL])
+        v.registrar_historico(sistema_de(ctx["ssd"]), registro_historico(ctx), copias_html=[PASTA_LOCAL])
 
     pendente = bool(ctx["vencidos"]) and ctx["politica"] == "perguntar" and not ctx["simular"]
     ctx["vai_perguntar"] = pendente and modo == "tela" and _interativo()

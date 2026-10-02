@@ -213,18 +213,24 @@ class BaseFluxo(Base):
             "serial": "TESTE", "id": "id-teste", "origem": str(self.origem),
             "limite_abs": 3, "limite_pct": 0.5, "margem_espaco_gb": 0,
         }), encoding="utf-8")
-        self._orig = (s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL, s.PASTA_LOCAL, v.notificar)
+        self._orig = (s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL, s.PASTA_LOCAL, v.notificar,
+                      s.PASTA_LOCAL_LEGADA, s.CONFIG_PADRAO, s.CONFIG_LEGADO)
         s.localizar_ssd = lambda cfg: self.ssd if cfg["serial"] == "TESTE" else None
         s.PASTA_LOCAL = self.tmp / "local"
         s.LOCK = self.tmp / "sync.lock"
         s.LOG_LOCAL = self.tmp / "local" / "sync.log"
         s.ESTADO_LOCAL = self.tmp / "local" / s.ARQ_ESTADO
+        # a migração de nomes antigos nunca pode tocar nos arquivos reais da máquina
+        s.PASTA_LOCAL_LEGADA = self.tmp / "local_legado"
+        s.CONFIG_PADRAO = self.tmp / "programa" / "guarda_ssd_config.json"
+        s.CONFIG_LEGADO = self.tmp / "programa" / "sync_ssd_config.json"
         self.notificacoes = []
         v.notificar = lambda titulo, texto: self.notificacoes.append((titulo, texto)) or True
         escrever(self.ssd / s.PASTA_SISTEMA / s.ARQ_IDENTIDADE, b"id=id-teste")
 
     def tearDown(self):
-        s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL, s.PASTA_LOCAL, v.notificar = self._orig
+        (s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL, s.PASTA_LOCAL, v.notificar,
+         s.PASTA_LOCAL_LEGADA, s.CONFIG_PADRAO, s.CONFIG_LEGADO) = self._orig
         super().tearDown()
 
     def rodar(self, *args):
@@ -474,6 +480,53 @@ class TestFluxoCompleto(BaseFluxo):
         self.assertEqual((regs[0]["tipo"], regs[0]["novos"], regs[0]["resultado"]), ("backup", 1, "ok"))
         self.assertTrue((self.ssd / s.PASTA_SISTEMA / "historico.html").exists())
         self.assertTrue((s.PASTA_LOCAL / "historico.html").exists())      # cópia local
+
+
+class TestNomesAntigos(BaseFluxo):
+    """Quem usava a versão chamada sync_ssd (até a 2.1) passa para guarda_ssd sem perder nada."""
+
+    def test_pasta_do_ssd_com_nome_antigo(self):
+        legado = self.ssd / s.PASTA_SISTEMA_LEGADA
+        (self.ssd / s.PASTA_SISTEMA).rename(legado)
+        escrever(legado / s.PASTA_VERSOES / "2026-09-29_163650" / "velho.docx", b"v1")
+        escrever(self.origem / "a.txt", b"1")
+        escrever(self.ssd / "a.txt", b"1")
+        os.utime(self.ssd / "a.txt", (os.stat(self.origem / "a.txt").st_mtime,) * 2)
+
+        self.assertEqual(self.rodar("--simular"), 0)
+        self.assertTrue(legado.exists())                                 # simulação não renomeia
+        self.assertNotIn(s.PASTA_SISTEMA_LEGADA, self.saida)             # nem trata a pasta como órfã
+        self.assertIn("1 arquivo", self.saida)                           # e já enxerga o que está guardado
+
+        self.assertEqual(self.rodar(), 0)
+        nova = self.ssd / s.PASTA_SISTEMA
+        self.assertFalse(legado.exists())
+        self.assertEqual((nova / s.PASTA_VERSOES / "2026-09-29_163650" / "velho.docx").read_bytes(), b"v1")
+        self.assertTrue((nova / s.ARQ_IDENTIDADE).exists())
+        self.assertTrue((nova / "historico.json").exists())
+        self.assertIn(s.PASTA_SISTEMA, self.saida)                       # a tela avisa a renomeação
+
+    def test_configuracao_e_pasta_local_com_nome_antigo(self):
+        s.CONFIG_LEGADO.parent.mkdir(parents=True)
+        s.CONFIG_LEGADO.write_text('{"serial": "X", "id": "Y"}', encoding="utf-8")
+        escrever(s.PASTA_LOCAL_LEGADA / "ultimo_resultado.json", b"{}")
+        escrever(s.PASTA_LOCAL_LEGADA / "sync.log", b"antigo")
+        escrever(s.PASTA_LOCAL / "sync.log", b"novo")                   # já existe no lugar novo: não sobrescreve
+        avisos = s.migrar_nomes_antigos()
+        self.assertFalse(s.CONFIG_LEGADO.exists())
+        self.assertEqual(json.loads(s.CONFIG_PADRAO.read_text(encoding="utf-8"))["id"], "Y")
+        self.assertTrue((s.PASTA_LOCAL / "ultimo_resultado.json").exists())
+        self.assertEqual((s.PASTA_LOCAL / "sync.log").read_bytes(), b"novo")
+        self.assertEqual(len(avisos), 2)
+        self.assertEqual(s.migrar_nomes_antigos(), [])                   # segunda vez: nada a fazer
+
+    def test_nao_sobrescreve_configuracao_nova(self):
+        s.CONFIG_LEGADO.parent.mkdir(parents=True)
+        s.CONFIG_LEGADO.write_text('{"id": "antigo"}', encoding="utf-8")
+        s.CONFIG_PADRAO.write_text('{"id": "novo"}', encoding="utf-8")
+        s.migrar_nomes_antigos()
+        self.assertEqual(json.loads(s.CONFIG_PADRAO.read_text(encoding="utf-8"))["id"], "novo")
+        self.assertTrue(s.CONFIG_LEGADO.exists())
 
 
 class TestLimpezaDoQueVenceu(BaseFluxo):

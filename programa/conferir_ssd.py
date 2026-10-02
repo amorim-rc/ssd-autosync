@@ -5,10 +5,10 @@ Só leitura: nunca copia, move ou apaga nada. Compara TODOS os arquivos da orige
 com o espelho no SSD por metadados (existe? mesmo tamanho? mesma data?), o que
 não força o Google Drive a baixar nada e leva poucos segundos.
 
-É independente do sync_ssd.py de propósito: não importa nada dele. A varredura e
+É independente do guarda_ssd.py de propósito: não importa nada dele. A varredura e
 a comparação são reimplementadas aqui, para que um erro na lógica do backup não
 seja "confirmado" pela mesma lógica na conferência. Só compartilha o arquivo de
-configuração (sync_ssd_config.json), a identificação do SSD (serial + ID) e o
+configuração (guarda_ssd_config.json), a identificação do SSD (serial + ID) e o
 módulo de apresentação visual_ssd.py (tela, histórico, notificação), que não
 tem lógica de comparação.
 
@@ -29,7 +29,7 @@ Códigos de saída:
   2  SSD de backup não encontrado
   3  origem indisponível (Google Drive fechado?)
   4  origem vazia, conferência não faz sentido
-  10 configuração não encontrada (rode sync_ssd.py --registrar)
+  10 configuração não encontrada (rode guarda_ssd.py --registrar)
 """
 
 import argparse
@@ -45,10 +45,12 @@ from pathlib import Path
 import visual_ssd as v
 
 WINDOWS = os.name == "nt"
-PASTA_SISTEMA = "_sync_ssd"
+PASTA_SISTEMA = "_guarda_ssd"
+PASTA_SISTEMA_LEGADA = "_sync_ssd"    # nome até a 2.1; o backup renomeia, a conferência só lê
+PASTAS_SISTEMA = {PASTA_SISTEMA.lower(), PASTA_SISTEMA_LEGADA.lower()}
 ARQ_IDENTIDADE = "IDENTIDADE_SSD.txt"
-RAIZ_IGNORADA = {PASTA_SISTEMA.lower(), "$recycle.bin", "system volume information", "found.000"}
-# Usados só se a configuração não trouxer "excluir" (o sync_ssd.py tem a mesma lista).
+RAIZ_IGNORADA = PASTAS_SISTEMA | {"$recycle.bin", "system volume information", "found.000"}
+# Usados só se a configuração não trouxer "excluir" (o guarda_ssd.py tem a mesma lista).
 EXCLUIR_PADRAO = [
     "*.gdoc", "*.gsheet", "*.gslides", "*.gform", "*.gdraw", "*.gmap",
     "*.gsite", "*.gjam", "*.glink", "*.gscript", "*.gtable", "*.gnote",
@@ -57,7 +59,10 @@ EXCLUIR_PADRAO = [
 ATRIB_NAO_BAIXADO = 0x1000 | 0x40000 | 0x400000   # OFFLINE | RECALL_ON_OPEN | RECALL_ON_DATA_ACCESS
 
 AQUI = Path(__file__).resolve().parent
-PASTA_LOCAL = Path(os.environ.get("LOCALAPPDATA", str(AQUI))) / "SyncSSD"
+PASTA_LOCAL = Path(os.environ.get("LOCALAPPDATA", str(AQUI))) / "GuardaSSD"
+PASTA_LOCAL_LEGADA = Path(os.environ.get("LOCALAPPDATA", str(AQUI))) / "SyncSSD"   # até a 2.1
+CONFIG = "guarda_ssd_config.json"
+CONFIG_LEGADO = "sync_ssd_config.json"                                             # até a 2.1
 LOG_LOCAL = PASTA_LOCAL / "conferencia.log"
 RESULTADO_LOCAL = PASTA_LOCAL / "ultima_conferencia.json"
 
@@ -74,10 +79,12 @@ TIPOS = [   # (chave, rótulo, conta como divergência?)
 def achar_config(arg):
     if arg:
         return Path(arg).expanduser().resolve()
-    for p in (AQUI / "sync_ssd_config.json", PASTA_LOCAL / "sync_ssd_config.json"):
+    # Os nomes antigos só valem até o próximo backup, que os renomeia.
+    for p in (AQUI / CONFIG, PASTA_LOCAL / CONFIG, AQUI / CONFIG_LEGADO,
+              PASTA_LOCAL / CONFIG_LEGADO, PASTA_LOCAL_LEGADA / CONFIG_LEGADO):
         if p.exists():
             return p
-    return AQUI / "sync_ssd_config.json"
+    return AQUI / CONFIG
 
 
 # ------------------------------------------------------------------- SSD
@@ -100,12 +107,20 @@ def localizar_ssd(cfg):
         raiz = f"{letra}:\\"
         if not mascara >> i & 1 or serial_do_volume(raiz) != cfg.get("serial"):
             continue
-        try:
-            if cfg["id"] in (Path(raiz) / PASTA_SISTEMA / ARQ_IDENTIDADE).read_text(encoding="utf-8"):
-                return Path(raiz)
-        except (OSError, KeyError):
-            pass
+        for pasta in (PASTA_SISTEMA, PASTA_SISTEMA_LEGADA):
+            try:
+                if cfg["id"] in (Path(raiz) / pasta / ARQ_IDENTIDADE).read_text(encoding="utf-8"):
+                    return Path(raiz)
+            except (OSError, KeyError):
+                pass
     return None
+
+
+def sistema_de(ssd):
+    """Pasta de sistema no SSD: a nova, ou a de nome antigo enquanto o backup não a renomear."""
+    nova = Path(ssd) / PASTA_SISTEMA
+    antiga = Path(ssd) / PASTA_SISTEMA_LEGADA
+    return antiga if not nova.exists() and antiga.is_dir() else nova
 
 
 # --------------------------------------------------------------- varredura
@@ -205,7 +220,7 @@ FRASES = {
     2: "SSD de backup não encontrado. Ele está plugado?",
     3: "A origem ({origem}) não está disponível. O Google Drive está aberto?",
     4: "A origem está vazia. Não há o que conferir.",
-    10: "O SSD ainda não foi registrado. Rode: python sync_ssd.py --registrar D:",
+    10: "O SSD ainda não foi registrado. Rode: python guarda_ssd.py --registrar D:",
 }
 TELA = {   # tipo -> (símbolo, título, cor)
     "faltando": ("falha", "Faltando no SSD", "vermelho"),
@@ -280,7 +295,7 @@ def main(argv=None):
     ap.add_argument("--limite", type=int, default=30, metavar="N",
                     help="quantos arquivos listar por tipo de divergência (0 = todos; padrão 30)")
     ap.add_argument("--extras", action="store_true", help="lista também os arquivos que só existem no SSD")
-    ap.add_argument("--config", metavar="ARQUIVO", help="caminho do sync_ssd_config.json")
+    ap.add_argument("--config", metavar="ARQUIVO", help="caminho do guarda_ssd_config.json")
     saida = ap.add_mutually_exclusive_group()
     saida.add_argument("--detalhado", action="store_true", help="relatório técnico completo")
     saida.add_argument("--silencioso", action="store_true",
@@ -295,7 +310,7 @@ def main(argv=None):
     ctx["duracao"] = (datetime.now() - ctx["inicio"]).total_seconds()
 
     if ctx["ssd"] and ctx["codigo"] in (0, 1):
-        v.registrar_historico(ctx["ssd"] / PASTA_SISTEMA, {
+        v.registrar_historico(sistema_de(ctx["ssd"]), {
             "tipo": "conferencia", "quando": ctx["inicio"].isoformat(timespec="seconds"),
             "codigo": ctx["codigo"], "resultado": severidade(ctx["codigo"]), "frase": frase(ctx),
             "arquivos_drive": ctx["arquivos_drive"], "divergencias": ctx["divergencias"],
@@ -317,10 +332,10 @@ def conferencia(a, rel, ctx):
     try:
         cfg = json.loads(caminho.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        rel(f"Configuração não encontrada ou inválida ({caminho}). Rode: python sync_ssd.py --registrar D:")
+        rel(f"Configuração não encontrada ou inválida ({caminho}). Rode: python guarda_ssd.py --registrar D:")
         return 10
     if not cfg.get("serial") or not cfg.get("id"):
-        rel(f"{caminho} não tem serial/id. Rode: python sync_ssd.py --registrar D:")
+        rel(f"{caminho} não tem serial/id. Rode: python guarda_ssd.py --registrar D:")
         return 10
 
     origem = Path(cfg.get("origem", r"G:\Meu Drive"))
@@ -335,7 +350,7 @@ def conferencia(a, rel, ctx):
         return 2
     ctx["ssd"] = ssd
     destino = ssd / cfg["pasta_destino"] if cfg.get("pasta_destino") else ssd
-    log_ssd = ssd / PASTA_SISTEMA / "logs" / f"conferencia-{datetime.now():%Y-%m}.log"
+    log_ssd = sistema_de(ssd) / "logs" / f"conferencia-{datetime.now():%Y-%m}.log"
 
     if not origem.is_dir():
         rel(f"Origem {origem} indisponível (Google Drive fechado?). Nada foi conferido.")
@@ -344,7 +359,7 @@ def conferencia(a, rel, ctx):
 
     inicio = datetime.now()
     rel(f"Conferência: {origem}  x  {destino}")
-    drive, erros_d = listar(origem, padroes, raiz_ignorada=RAIZ_IGNORADA - {PASTA_SISTEMA.lower()})
+    drive, erros_d = listar(origem, padroes, raiz_ignorada=RAIZ_IGNORADA - PASTAS_SISTEMA)
     espelho, erros_s = listar(destino, padroes, raiz_ignorada=RAIZ_IGNORADA)
     if not drive:
         rel("A origem está vazia. Conferência cancelada.")

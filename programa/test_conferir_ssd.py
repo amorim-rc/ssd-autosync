@@ -1,7 +1,7 @@
 """
 Testes do conferir_ssd.py. Só biblioteca padrão:  python -m unittest -v
 
-O último teste roda o sync_ssd.py de verdade e confere o resultado com o
+O último teste roda o guarda_ssd.py de verdade e confere o resultado com o
 conferir_ssd.py: as duas ferramentas têm código independente e precisam
 concordar sobre o que é "SSD idêntico ao Drive".
 """
@@ -195,20 +195,37 @@ class TestModosDeSaida(Base):
         self.assertTrue((c.PASTA_LOCAL / "historico.html").exists())
 
 
+class TestNomeAntigoDaPastaNoSSD(Base):
+    def test_le_a_pasta_antiga_e_nao_a_trata_como_arquivo(self):
+        legado = self.ssd / c.PASTA_SISTEMA_LEGADA
+        (self.ssd / c.PASTA_SISTEMA).rename(legado)
+        escrever(legado / "logs" / "2026-09.log", b"log antigo")
+        self.par("a.txt")
+        self.assertEqual(self.rodar("--json"), 0)
+        self.assertEqual(json.loads(self.saida)["extras"], [])          # a pasta antiga não é "só no SSD"
+        self.assertTrue((legado / "historico.json").exists())           # registra onde a pasta está hoje
+        self.assertFalse((self.ssd / c.PASTA_SISTEMA).exists())         # e não cria a nova (só leitura)
+
+
 class TestConcordaComOBackup(Base):
-    """sync_ssd.py faz o backup; conferir_ssd.py tem que dizer 'idêntico'."""
+    """guarda_ssd.py faz o backup; conferir_ssd.py tem que dizer 'idêntico'."""
 
     def test_backup_seguido_de_conferencia(self):
-        import sync_ssd as s
+        import guarda_ssd as s
         cfg = json.loads(self.config.read_text(encoding="utf-8"))
         cfg.update(limite_abs=10_000, margem_espaco_gb=0)
         self.config.write_text(json.dumps(cfg), encoding="utf-8")
         escrever(self.ssd / c.PASTA_SISTEMA / c.ARQ_IDENTIDADE, b"id=id-teste")
-        orig = (s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL, s.PASTA_LOCAL)
+        orig = (s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL, s.PASTA_LOCAL,
+                s.PASTA_LOCAL_LEGADA, s.CONFIG_PADRAO, s.CONFIG_LEGADO)
         s.localizar_ssd = lambda cfg: self.ssd
         s.LOCK, s.LOG_LOCAL = self.tmp / "sync.lock", self.tmp / "local" / "sync.log"
         s.ESTADO_LOCAL = self.tmp / "local" / "estado.json"
         s.PASTA_LOCAL = self.tmp / "local"
+        # a migração de nomes antigos nunca pode tocar nos arquivos reais da máquina
+        s.PASTA_LOCAL_LEGADA = self.tmp / "local_legado"
+        s.CONFIG_PADRAO = self.tmp / "programa" / "guarda_ssd_config.json"
+        s.CONFIG_LEGADO = self.tmp / "programa" / "sync_ssd_config.json"
 
         def backup(*args):
             with contextlib.redirect_stdout(io.StringIO()):
@@ -230,7 +247,8 @@ class TestConcordaComOBackup(Base):
             self.assertEqual(self.rodar("--json"), 0)
             self.assertEqual(json.loads(self.saida)["extras"], [])         # quarentena tirou do espelho
         finally:
-            s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL, s.PASTA_LOCAL = orig
+            (s.localizar_ssd, s.LOCK, s.LOG_LOCAL, s.ESTADO_LOCAL, s.PASTA_LOCAL,
+             s.PASTA_LOCAL_LEGADA, s.CONFIG_PADRAO, s.CONFIG_LEGADO) = orig
 
 
 if __name__ == "__main__":

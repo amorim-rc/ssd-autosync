@@ -3,5 +3,5 @@ rem Duplo clique: mostra o que o backup faria, sem copiar nada.
 chcp 65001 >nul
 set PYTHONIOENCODING=utf-8
 cd /d "%~dp0"
-python programa\sync_ssd.py --simular --quarentena
+python programa\guarda_ssd.py --simular --quarentena
 pause
