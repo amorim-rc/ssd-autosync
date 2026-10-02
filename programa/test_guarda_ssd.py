@@ -1,5 +1,5 @@
 """
-Testes do sync_ssd.py. Só biblioteca padrão:  python -m unittest -v
+Testes do guarda_ssd.py. Só biblioteca padrão:  python -m unittest -v
 
 Cobrem a lógica de varredura, comparação, movidos, cópia/versionamento, limpeza
 de versões e o fluxo completo do backup em pastas temporárias. A parte que fala
@@ -18,7 +18,7 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import sync_ssd as s
+import guarda_ssd as s
 import visual_ssd as v
 
 
@@ -33,7 +33,7 @@ def escrever(caminho, conteudo=b"x", mtime=None):
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="sync_ssd_test_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="guarda_ssd_test_"))
         self.origem = self.tmp / "drive"
         self.ssd = self.tmp / "ssd"
         self.origem.mkdir()
