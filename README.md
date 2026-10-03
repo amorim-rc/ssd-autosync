@@ -1,4 +1,6 @@
-# guarda_ssd
+# Mnemósine
+
+<sub>O nome vem de Mnemósine. [Por quê?](MITO.md) O programa continua se chamando `guarda_ssd.py`, e as pastas no SSD, `_guarda_ssd`.</sub>
 
 Backup de mão única da pasta local do **Google Drive para Desktop** (ou de qualquer pasta do Windows) para **um SSD externo específico**. Python puro, sem dependências.
 
@@ -13,7 +15,7 @@ Um segundo script, independente, **confere o resultado**: compara todos os arqui
 Na pasta principal ficam só os atalhos que você clica. O programa fica na pasta `programa`, que você não precisa abrir.
 
 ```
-guarda-ssd\
+mnemosine\
 ├── Fazer backup.bat          backup (com quarentena) seguido de conferência
 ├── Simular backup.bat        mostra o que o backup faria, sem copiar nada
 ├── Conferir SSD.bat          só a conferência
@@ -57,7 +59,7 @@ guarda-ssd\
 
 ## Instalação (para quem fez fork)
 
-1. Clone ou baixe o repositório em uma pasta fixa, por exemplo `C:\Ferramentas\guarda-ssd\`, e abra um terminal na pasta `programa` dentro dela. Os comandos deste README são rodados de lá.
+1. Clone ou baixe o repositório em uma pasta fixa, por exemplo `C:\Ferramentas\mnemosine\`, e abra um terminal na pasta `programa` dentro dela. Os comandos deste README são rodados de lá.
 2. Copie `guarda_ssd_config.example.json` para `guarda_ssd_config.json` e ajuste pelo menos `origem`. Ou pule esta etapa e deixe o `--registrar` criar o arquivo com os padrões.
 3. Plugue o SSD e registre-o (troque `D:` pela letra dele):
 
@@ -331,7 +333,7 @@ No computador, em `%LOCALAPPDATA%\GuardaSSD\`, ficam o log local, o `ultimo_resu
 A forma mais simples é rodar a cada 30 minutos. Quando o SSD não está plugado o script sai em menos de um segundo com código 2, então o custo é zero. Use `pythonw.exe` (não abre janela) e `--silencioso` (você só é avisado quando há problema). A conferência roda em seguida se o backup terminar com código 0; o Agendador não abre o comando na pasta do script, então use caminhos completos:
 
 ```bat
-schtasks /Create /TN "GuardaSSD" /SC MINUTE /MO 30 /TR "cmd /c \"\"C:\Python312\pythonw.exe\" \"C:\Ferramentas\guarda-ssd\programa\guarda_ssd.py\" --quarentena --silencioso --alertar-se-velho 7 && \"C:\Python312\pythonw.exe\" \"C:\Ferramentas\guarda-ssd\programa\conferir_ssd.py\" --silencioso\""
+schtasks /Create /TN "GuardaSSD" /SC MINUTE /MO 30 /TR "cmd /c \"\"C:\Python312\pythonw.exe\" \"C:\Ferramentas\mnemosine\programa\guarda_ssd.py\" --quarentena --silencioso --alertar-se-velho 7 && \"C:\Python312\pythonw.exe\" \"C:\Ferramentas\mnemosine\programa\conferir_ssd.py\" --silencioso\""
 ```
 
 Com `--alertar-se-velho 7`, se você ficar uma semana sem plugar o SSD aparece uma notificação, no máximo uma por dia.
