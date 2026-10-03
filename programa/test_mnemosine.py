@@ -1,5 +1,5 @@
 """
-Testes do guarda_ssd.py. Só biblioteca padrão:  python -m unittest -v
+Testes do mnemosine.py. Só biblioteca padrão:  python -m unittest -v
 
 Cobrem a lógica de varredura, comparação, movidos, cópia/versionamento, limpeza
 de versões e o fluxo completo do backup em pastas temporárias. A parte que fala
@@ -18,7 +18,7 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import guarda_ssd as s
+import mnemosine as s
 import visual_ssd as v
 
 
@@ -33,7 +33,7 @@ def escrever(caminho, conteudo=b"x", mtime=None):
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="guarda_ssd_test_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="mnemosine_test_"))
         self.origem = self.tmp / "drive"
         self.ssd = self.tmp / "ssd"
         self.origem.mkdir()
@@ -222,8 +222,8 @@ class BaseFluxo(Base):
         s.ESTADO_LOCAL = self.tmp / "local" / s.ARQ_ESTADO
         # a migração de nomes antigos nunca pode tocar nos arquivos reais da máquina
         s.PASTA_LOCAL_LEGADA = self.tmp / "local_legado"
-        s.CONFIG_PADRAO = self.tmp / "programa" / "guarda_ssd_config.json"
-        s.CONFIG_LEGADO = self.tmp / "programa" / "sync_ssd_config.json"
+        s.CONFIG_PADRAO = self.tmp / "programa" / "mnemosine_config.json"
+        s.CONFIG_LEGADO = self.tmp / "programa" / "guarda_ssd_config.json"
         self.notificacoes = []
         v.notificar = lambda titulo, texto: self.notificacoes.append((titulo, texto)) or True
         escrever(self.ssd / s.PASTA_SISTEMA / s.ARQ_IDENTIDADE, b"id=id-teste")
@@ -483,7 +483,7 @@ class TestFluxoCompleto(BaseFluxo):
 
 
 class TestNomesAntigos(BaseFluxo):
-    """Quem usava a versão chamada sync_ssd (até a 2.1) passa para guarda_ssd sem perder nada."""
+    """Quem usava a versão chamada guarda_ssd (até a 2.2) passa para mnemosine sem perder nada."""
 
     def test_pasta_do_ssd_com_nome_antigo(self):
         legado = self.ssd / s.PASTA_SISTEMA_LEGADA

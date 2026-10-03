@@ -1,5 +1,5 @@
 """
-guarda_ssd.py - Backup de mão única: Google Drive (local) -> SSD externo específico.
+mnemosine.py - Backup de mão única: Google Drive (local) -> SSD externo específico.
 
 Regras:
   * Copia arquivos novos e arquivos cuja data de modificação ou tamanho mudou.
@@ -8,9 +8,9 @@ Regras:
   * Ignora atalhos do Google Docs (.gdoc, .gsheet...), desktop.ini e o que
     mais estiver em "excluir" na configuração.
   * NUNCA apaga nada do SSD. Antes de sobrescrever um arquivo, guarda a versão
-    antiga em _guarda_ssd/versoes-antigas/<data>/ (por "dias_versoes" dias).
+    antiga em _mnemosine/versoes-antigas/<data>/ (por "dias_versoes" dias).
     Órfãos (arquivos que saíram do Drive) só saem do espelho se você pedir com
-    --quarentena, e vão para _guarda_ssd/quarentena/<data>/ (por "dias_quarentena" dias).
+    --quarentena, e vão para _mnemosine/quarentena/<data>/ (por "dias_quarentena" dias).
   * Só roda no SSD registrado: exige o número de série do volume E o arquivo
     de identidade com o ID gerado no registro. Outro disco com a mesma letra
     ou o mesmo nome é recusado.
@@ -20,19 +20,19 @@ Regras:
     e pula arquivos que o Google Drive ainda não baixou (modo "stream").
 
 Uso:
-  python guarda_ssd.py --registrar D:        # uma vez: marca este SSD como o destino
-  python guarda_ssd.py --simular             # mostra o que faria, sem copiar
-  python guarda_ssd.py                       # executa o backup
-  python guarda_ssd.py --forcar              # executa ignorando a trava de segurança
-  python guarda_ssd.py --orfaos              # só lista o que está no SSD mas saiu do Drive
-  python guarda_ssd.py --quarentena          # backup + move órfãos para _guarda_ssd/quarentena/
-  python guarda_ssd.py --verificar [N]       # backup + confere hash de N arquivos (0 = todos)
-  python guarda_ssd.py --status              # mostra o resultado da última execução
-  python guarda_ssd.py --historico           # abre o histórico de execuções no navegador
-  python guarda_ssd.py --limpar              # o que venceu nas pastas de guarda, com confirmação
-  python guarda_ssd.py --configurar-limpeza  # apagar o que vence: automático, perguntar ou nunca
-  python guarda_ssd.py --testar-notificacao  # envia uma notificação de teste
-  python guarda_ssd.py --alertar-se-velho 7  # se o SSD não estiver plugado e o último
+  python mnemosine.py --registrar D:        # uma vez: marca este SSD como o destino
+  python mnemosine.py --simular             # mostra o que faria, sem copiar
+  python mnemosine.py                       # executa o backup
+  python mnemosine.py --forcar              # executa ignorando a trava de segurança
+  python mnemosine.py --orfaos              # só lista o que está no SSD mas saiu do Drive
+  python mnemosine.py --quarentena          # backup + move órfãos para _mnemosine/quarentena/
+  python mnemosine.py --verificar [N]       # backup + confere hash de N arquivos (0 = todos)
+  python mnemosine.py --status              # mostra o resultado da última execução
+  python mnemosine.py --historico           # abre o histórico de execuções no navegador
+  python mnemosine.py --limpar              # o que venceu nas pastas de guarda, com confirmação
+  python mnemosine.py --configurar-limpeza  # apagar o que vence: automático, perguntar ou nunca
+  python mnemosine.py --testar-notificacao  # envia uma notificação de teste
+  python mnemosine.py --alertar-se-velho 7  # se o SSD não estiver plugado e o último
                                            # backup tiver mais de 7 dias, avisa na tela
 
 Saída (o backup é o mesmo; muda só como o resultado aparece):
@@ -63,12 +63,12 @@ from pathlib import Path
 
 import visual_ssd as v
 
-VERSAO = "2.2"
+VERSAO = "3.0"
 WINDOWS = os.name == "nt"
 
 # ---------------------------------------------------------------- configuração
-PASTA_SISTEMA = "_guarda_ssd"      # na raiz do SSD: identidade, logs, versões
-PASTA_SISTEMA_LEGADA = "_sync_ssd" # nome usado até a 2.1 (o programa se chamava sync_ssd); migrado
+PASTA_SISTEMA = "_mnemosine"      # na raiz do SSD: identidade, logs, versões
+PASTA_SISTEMA_LEGADA = "_guarda_ssd" # nome usado até a 2.2 (o programa se chamava guarda_ssd); migrado
 PASTA_VERSOES = "versoes-antigas"  # dentro de PASTA_SISTEMA: versão anterior de arquivos sobrescritos
 PASTA_QUARENTENA = "quarentena"    # dentro de PASTA_SISTEMA: arquivos que saíram da origem
 PASTA_LEGADA = "versoes"           # nome usado até a 2.0 (migrado para PASTA_VERSOES)
@@ -77,7 +77,7 @@ ARQ_ESTADO = "ultimo_resultado.json"
 SUFIXO_TMP = ".sync_tmp"
 FORMATO_CARIMBO = "%Y-%m-%d_%H%M%S"
 
-# Valores padrão. Qualquer um pode ser sobrescrito no guarda_ssd_config.json.
+# Valores padrão. Qualquer um pode ser sobrescrito no mnemosine_config.json.
 PADRAO = {
     "origem": r"G:\Meu Drive",
     "pasta_destino": "",            # subpasta no SSD ("" = raiz do SSD)
@@ -118,10 +118,10 @@ CODIGOS = {
 }
 
 AQUI = Path(__file__).resolve().parent
-PASTA_LOCAL = Path(os.environ.get("LOCALAPPDATA", str(AQUI))) / "GuardaSSD"
-PASTA_LOCAL_LEGADA = Path(os.environ.get("LOCALAPPDATA", str(AQUI))) / "SyncSSD"   # até a 2.1
-CONFIG_PADRAO = AQUI / "guarda_ssd_config.json"
-CONFIG_LEGADO = AQUI / "sync_ssd_config.json"                                       # até a 2.1
+PASTA_LOCAL = Path(os.environ.get("LOCALAPPDATA", str(AQUI))) / "Mnemosine"
+PASTA_LOCAL_LEGADA = Path(os.environ.get("LOCALAPPDATA", str(AQUI))) / "GuardaSSD"   # até a 2.2
+CONFIG_PADRAO = AQUI / "mnemosine_config.json"
+CONFIG_LEGADO = AQUI / "guarda_ssd_config.json"                                       # até a 2.2
 LOG_LOCAL = PASTA_LOCAL / "sync.log"
 ESTADO_LOCAL = PASTA_LOCAL / ARQ_ESTADO
 LOCK = PASTA_LOCAL / "sync.lock"
@@ -219,7 +219,7 @@ def unidades():
 
 
 def sistema_de(ssd):
-    """A pasta de sistema no SSD. Enquanto a pasta de nome antigo (_sync_ssd) não for
+    """A pasta de sistema no SSD. Enquanto a pasta de nome antigo (_guarda_ssd) não for
     migrada, é ela que vale; depois, sempre a nova."""
     nova = Path(ssd) / PASTA_SISTEMA
     antiga = Path(ssd) / PASTA_SISTEMA_LEGADA
@@ -227,7 +227,7 @@ def sistema_de(ssd):
 
 
 def migrar_pasta_sistema(ssd):
-    """Renomeia _sync_ssd para _guarda_ssd no SSD, se for o caso. -> True se renomeou."""
+    """Renomeia _guarda_ssd para _mnemosine no SSD, se for o caso. -> True se renomeou."""
     nova = Path(ssd) / PASTA_SISTEMA
     antiga = Path(ssd) / PASTA_SISTEMA_LEGADA
     if antiga.is_dir() and not nova.exists():
@@ -237,7 +237,7 @@ def migrar_pasta_sistema(ssd):
 
 
 def migrar_nomes_antigos():
-    """Até a 2.1 o programa se chamava sync_ssd. Leva a pasta local e o arquivo de
+    """Até a 2.2 o programa se chamava guarda_ssd. Leva a pasta local e o arquivo de
     configuração para os nomes novos, sem sobrescrever nada. -> avisos para a tela."""
     avisos = []
     if v.migrar_pasta(PASTA_LOCAL_LEGADA, PASTA_LOCAL):
@@ -286,7 +286,7 @@ def registrar(letra, caminho_config, forcar):
     ident.parent.mkdir(exist_ok=True)
     id_ = str(uuid.uuid4())
     ident.write_text(
-        "Este disco é o destino de backup do guarda_ssd.py.\n"
+        "Este disco é o destino de backup do mnemosine.py.\n"
         "Não apague este arquivo nem esta pasta.\n"
         f"id={id_}\nserial={serial}\nsistema_de_arquivos={fs}\n"
         f"registrado={datetime.now():%Y-%m-%d %H:%M}\n",
@@ -775,7 +775,7 @@ def alertar_se_velho(dias):
     quando = f"há {idade.days} dias ({ultimo[:16]})" if idade is not None else "nunca"
     alertar("Backup do SSD atrasado",
             f"O último backup para o SSD foi feito {quando}.\n"
-            f"Plugue o SSD de backup para que o guarda_ssd.py rode.")
+            f"Plugue o SSD de backup para que o mnemosine.py rode.")
     est["ultimo_alerta"] = agora.isoformat(timespec="seconds")
     gravar_estado(est, ESTADO_LOCAL)
     return 9
@@ -814,7 +814,7 @@ def sincronizar(a, cfg, ssd, simular, estado, res, tela=None):
         except OSError as ex:
             log(f"AVISO: não consegui migrar a pasta '{PASTA_LEGADA}': {ex}")
 
-    log(f"Início{' (SIMULAÇÃO)' if simular else ''}: {origem} -> {destino}  [guarda_ssd {VERSAO}]")
+    log(f"Início{' (SIMULAÇÃO)' if simular else ''}: {origem} -> {destino}  [mnemosine {VERSAO}]")
     excluido = excluidor(cfg["excluir"])
     arq_o, erros_o = varrer(origem, excluido, caminhos_longos=L)
     arq_d, erros_d = varrer(destino, excluido, pular_raiz=[PASTA_SISTEMA, PASTA_SISTEMA_LEGADA], caminhos_longos=L)
@@ -1072,7 +1072,7 @@ FRASES = {
     7: "Já há um backup em andamento. Espere ele terminar.",
     8: "A verificação de conteúdo encontrou {divergentes} diferentes do Drive.",
     9: "O último backup está velho demais. Plugue o SSD de backup.",
-    10: "O SSD ainda não foi registrado. Rode: python guarda_ssd.py --registrar D:",
+    10: "O SSD ainda não foi registrado. Rode: python mnemosine.py --registrar D:",
     11: "Erro inesperado. Detalhes no log: {log}",
 }
 NOTIFICAR = {1, 3, 4, 5, 6, 8, 11}     # códigos que viram notificação no modo --silencioso
@@ -1134,7 +1134,7 @@ def _inventario_json(inv):
 def saida_json(ctx):
     res, ssd = ctx["res"], ctx["ssd"]
     return {
-        "programa": "guarda_ssd", "versao": VERSAO,
+        "programa": "mnemosine", "versao": VERSAO,
         "codigo": ctx["codigo"], "resultado": severidade(ctx["codigo"]), "mensagem": frase(ctx),
         "simulacao": ctx["simular"],
         "inicio": ctx["inicio"].isoformat(timespec="seconds"), "duracao_seg": round(ctx["duracao"], 2),
@@ -1495,19 +1495,19 @@ def main(argv=None):
     ap.add_argument("--testar-notificacao", action="store_true", help="envia uma notificação de teste")
     ap.add_argument("--alertar-se-velho", type=int, metavar="DIAS",
                     help="se o SSD não estiver presente e o último backup tiver mais de DIAS dias, avisa")
-    ap.add_argument("--config", metavar="ARQUIVO", help="caminho do guarda_ssd_config.json")
+    ap.add_argument("--config", metavar="ARQUIVO", help="caminho do mnemosine_config.json")
     saida = ap.add_mutually_exclusive_group()
     saida.add_argument("--detalhado", action="store_true", help="saída técnica, hora em cada linha")
     saida.add_argument("--silencioso", action="store_true",
                        help="nada na tela; notificação do Windows se houver problema")
     saida.add_argument("--json", action="store_true", help="resultado em JSON")
-    ap.add_argument("--versao", action="version", version=f"guarda_ssd {VERSAO}")
+    ap.add_argument("--versao", action="version", version=f"mnemosine {VERSAO}")
     a = ap.parse_args(argv)
 
     modo = "json" if a.json else "silencioso" if a.silencioso else "detalhado" if a.detalhado else "tela"
     log.ecoar = modo == "detalhado"
 
-    avisos_iniciais = migrar_nomes_antigos()      # quem vinha da versão chamada sync_ssd
+    avisos_iniciais = migrar_nomes_antigos()      # quem vinha da versão chamada guarda_ssd
     for aviso in avisos_iniciais:
         log(aviso)
     caminho_config = resolver_config(a.config)
@@ -1536,7 +1536,7 @@ def main(argv=None):
         print(FRASES[10])
         return 10
     if codigo_previo == 10:
-        log(f"SSD ainda não registrado ({caminho_config}). Rode: python guarda_ssd.py --registrar D:")
+        log(f"SSD ainda não registrado ({caminho_config}). Rode: python mnemosine.py --registrar D:")
 
     tela = v.Estilo() if modo == "tela" else None
     lock = None

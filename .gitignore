@@ -1,7 +1,7 @@
 # identifica o SEU SSD: versione só o .example
+mnemosine_config.json
+# nome usado até a 2.2
 guarda_ssd_config.json
-# nome usado até a 2.1
-sync_ssd_config.json
 
 # saída local do script
 *.log

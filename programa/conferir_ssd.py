@@ -5,10 +5,10 @@ Só leitura: nunca copia, move ou apaga nada. Compara TODOS os arquivos da orige
 com o espelho no SSD por metadados (existe? mesmo tamanho? mesma data?), o que
 não força o Google Drive a baixar nada e leva poucos segundos.
 
-É independente do guarda_ssd.py de propósito: não importa nada dele. A varredura e
+É independente do mnemosine.py de propósito: não importa nada dele. A varredura e
 a comparação são reimplementadas aqui, para que um erro na lógica do backup não
 seja "confirmado" pela mesma lógica na conferência. Só compartilha o arquivo de
-configuração (guarda_ssd_config.json), a identificação do SSD (serial + ID) e o
+configuração (mnemosine_config.json), a identificação do SSD (serial + ID) e o
 módulo de apresentação visual_ssd.py (tela, histórico, notificação), que não
 tem lógica de comparação.
 
@@ -29,7 +29,7 @@ Códigos de saída:
   2  SSD de backup não encontrado
   3  origem indisponível (Google Drive fechado?)
   4  origem vazia, conferência não faz sentido
-  10 configuração não encontrada (rode guarda_ssd.py --registrar)
+  10 configuração não encontrada (rode mnemosine.py --registrar)
 """
 
 import argparse
@@ -45,12 +45,12 @@ from pathlib import Path
 import visual_ssd as v
 
 WINDOWS = os.name == "nt"
-PASTA_SISTEMA = "_guarda_ssd"
-PASTA_SISTEMA_LEGADA = "_sync_ssd"    # nome até a 2.1; o backup renomeia, a conferência só lê
+PASTA_SISTEMA = "_mnemosine"
+PASTA_SISTEMA_LEGADA = "_guarda_ssd"    # nome até a 2.2; o backup renomeia, a conferência só lê
 PASTAS_SISTEMA = {PASTA_SISTEMA.lower(), PASTA_SISTEMA_LEGADA.lower()}
 ARQ_IDENTIDADE = "IDENTIDADE_SSD.txt"
 RAIZ_IGNORADA = PASTAS_SISTEMA | {"$recycle.bin", "system volume information", "found.000"}
-# Usados só se a configuração não trouxer "excluir" (o guarda_ssd.py tem a mesma lista).
+# Usados só se a configuração não trouxer "excluir" (o mnemosine.py tem a mesma lista).
 EXCLUIR_PADRAO = [
     "*.gdoc", "*.gsheet", "*.gslides", "*.gform", "*.gdraw", "*.gmap",
     "*.gsite", "*.gjam", "*.glink", "*.gscript", "*.gtable", "*.gnote",
@@ -59,10 +59,10 @@ EXCLUIR_PADRAO = [
 ATRIB_NAO_BAIXADO = 0x1000 | 0x40000 | 0x400000   # OFFLINE | RECALL_ON_OPEN | RECALL_ON_DATA_ACCESS
 
 AQUI = Path(__file__).resolve().parent
-PASTA_LOCAL = Path(os.environ.get("LOCALAPPDATA", str(AQUI))) / "GuardaSSD"
-PASTA_LOCAL_LEGADA = Path(os.environ.get("LOCALAPPDATA", str(AQUI))) / "SyncSSD"   # até a 2.1
-CONFIG = "guarda_ssd_config.json"
-CONFIG_LEGADO = "sync_ssd_config.json"                                             # até a 2.1
+PASTA_LOCAL = Path(os.environ.get("LOCALAPPDATA", str(AQUI))) / "Mnemosine"
+PASTA_LOCAL_LEGADA = Path(os.environ.get("LOCALAPPDATA", str(AQUI))) / "GuardaSSD"   # até a 2.2
+CONFIG = "mnemosine_config.json"
+CONFIG_LEGADO = "guarda_ssd_config.json"                                             # até a 2.2
 LOG_LOCAL = PASTA_LOCAL / "conferencia.log"
 RESULTADO_LOCAL = PASTA_LOCAL / "ultima_conferencia.json"
 
@@ -220,7 +220,7 @@ FRASES = {
     2: "SSD de backup não encontrado. Ele está plugado?",
     3: "A origem ({origem}) não está disponível. O Google Drive está aberto?",
     4: "A origem está vazia. Não há o que conferir.",
-    10: "O SSD ainda não foi registrado. Rode: python guarda_ssd.py --registrar D:",
+    10: "O SSD ainda não foi registrado. Rode: python mnemosine.py --registrar D:",
 }
 TELA = {   # tipo -> (símbolo, título, cor)
     "faltando": ("falha", "Faltando no SSD", "vermelho"),
@@ -295,7 +295,7 @@ def main(argv=None):
     ap.add_argument("--limite", type=int, default=30, metavar="N",
                     help="quantos arquivos listar por tipo de divergência (0 = todos; padrão 30)")
     ap.add_argument("--extras", action="store_true", help="lista também os arquivos que só existem no SSD")
-    ap.add_argument("--config", metavar="ARQUIVO", help="caminho do guarda_ssd_config.json")
+    ap.add_argument("--config", metavar="ARQUIVO", help="caminho do mnemosine_config.json")
     saida = ap.add_mutually_exclusive_group()
     saida.add_argument("--detalhado", action="store_true", help="relatório técnico completo")
     saida.add_argument("--silencioso", action="store_true",
@@ -332,10 +332,10 @@ def conferencia(a, rel, ctx):
     try:
         cfg = json.loads(caminho.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        rel(f"Configuração não encontrada ou inválida ({caminho}). Rode: python guarda_ssd.py --registrar D:")
+        rel(f"Configuração não encontrada ou inválida ({caminho}). Rode: python mnemosine.py --registrar D:")
         return 10
     if not cfg.get("serial") or not cfg.get("id"):
-        rel(f"{caminho} não tem serial/id. Rode: python guarda_ssd.py --registrar D:")
+        rel(f"{caminho} não tem serial/id. Rode: python mnemosine.py --registrar D:")
         return 10
 
     origem = Path(cfg.get("origem", r"G:\Meu Drive"))

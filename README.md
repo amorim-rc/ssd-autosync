@@ -1,6 +1,6 @@
 # Mnemósine
 
-<sub>O nome vem de Mnemósine. [Por quê?](MITO.md) O programa continua se chamando `guarda_ssd.py`, e as pastas no SSD, `_guarda_ssd`.</sub>
+<sub>O nome vem de Mnemósine. [Por quê?](MITO.md)</sub>
 
 Backup de mão única da pasta local do **Google Drive para Desktop** (ou de qualquer pasta do Windows) para **um SSD externo específico**. Python puro, sem dependências.
 
@@ -24,11 +24,11 @@ mnemosine\
 ├── Ver histórico.bat         abre o histórico no navegador
 ├── README.md
 └── programa\
-    ├── guarda_ssd.py                    o backup
+    ├── mnemosine.py                    o backup
     ├── conferir_ssd.py                a conferência (só leitura, código de comparação próprio)
     ├── visual_ssd.py                  apresentação: tela, notificação, histórico
-    ├── guarda_ssd_config.example.json   modelo de configuração
-    ├── guarda_ssd_config.json           a sua configuração (criada pelo --registrar; fora do Git)
+    ├── mnemosine_config.example.json   modelo de configuração
+    ├── mnemosine_config.json           a sua configuração (criada pelo --registrar; fora do Git)
     └── test_*.py                      testes
 ```
 
@@ -39,8 +39,8 @@ mnemosine\
 | Garantia | Como |
 |---|---|
 | Só grava no SSD certo | Exige o **número de série do volume** e um **arquivo de identidade** com um ID gerado no registro. Outro disco com a mesma letra ou o mesmo nome é recusado. |
-| Nunca apaga de imediato | Arquivos que saíram do Drive ficam no SSD como "órfãos". Com `--quarentena` (o padrão do `Fazer backup.bat`), saem do espelho para `_guarda_ssd/quarentena/<data-hora>/` e ficam lá por 90 dias. |
-| Guarda a versão anterior | Antes de sobrescrever, move o arquivo antigo para `_guarda_ssd/versoes-antigas/<data-hora>/`. Ficam por 90 dias. |
+| Nunca apaga de imediato | Arquivos que saíram do Drive ficam no SSD como "órfãos". Com `--quarentena` (o padrão do `Fazer backup.bat`), saem do espelho para `_mnemosine/quarentena/<data-hora>/` e ficam lá por 90 dias. |
+| Guarda a versão anterior | Antes de sobrescrever, move o arquivo antigo para `_mnemosine/versoes-antigas/<data-hora>/`. Ficam por 90 dias. |
 | Nunca deixa arquivo pela metade | Copia para um `.sync_tmp` e só então troca pelo definitivo. |
 | Não duplica ao mover pasta | Pasta renomeada ou movida no Drive é movida dentro do SSD, sem recopiar. |
 | Trava contra ransomware | Se muitos arquivos mudarem de uma vez, aborta sem copiar nada. |
@@ -60,25 +60,25 @@ mnemosine\
 ## Instalação (para quem fez fork)
 
 1. Clone ou baixe o repositório em uma pasta fixa, por exemplo `C:\Ferramentas\mnemosine\`, e abra um terminal na pasta `programa` dentro dela. Os comandos deste README são rodados de lá.
-2. Copie `guarda_ssd_config.example.json` para `guarda_ssd_config.json` e ajuste pelo menos `origem`. Ou pule esta etapa e deixe o `--registrar` criar o arquivo com os padrões.
+2. Copie `mnemosine_config.example.json` para `mnemosine_config.json` e ajuste pelo menos `origem`. Ou pule esta etapa e deixe o `--registrar` criar o arquivo com os padrões.
 3. Plugue o SSD e registre-o (troque `D:` pela letra dele):
 
    ```bat
-   python guarda_ssd.py --registrar D:
+   python mnemosine.py --registrar D:
    ```
 
-   Isso grava `D:\_guarda_ssd\IDENTIDADE_SSD.txt` no SSD e salva serial + id em `guarda_ssd_config.json`.
+   Isso grava `D:\_mnemosine\IDENTIDADE_SSD.txt` no SSD e salva serial + id em `mnemosine_config.json`.
 
 4. Veja o que o primeiro backup faria (ou dê dois cliques em `Simular backup.bat`):
 
    ```bat
-   python guarda_ssd.py --simular
+   python mnemosine.py --simular
    ```
 
 5. Rode o primeiro backup. Como o SSD está vazio, 100% dos arquivos são "novos" e a trava de segurança dispara. Isso é esperado. Passe `--forcar` só desta vez:
 
    ```bat
-   python guarda_ssd.py --forcar
+   python mnemosine.py --forcar
    ```
 
 6. Confira o resultado. Deve terminar com `✔ SSD idêntico ao Drive`:
@@ -140,25 +140,25 @@ Os `.bat` chamam `python`, que precisa estar no PATH (o instalador do python.org
 ## Uso
 
 ```
-python guarda_ssd.py                       backup incremental
-python guarda_ssd.py --simular             mostra o que faria, sem tocar em nada
-python guarda_ssd.py --forcar              ignora a trava de segurança
-python guarda_ssd.py --orfaos              só lista o que está no SSD e saiu do Drive (não copia nada)
-python guarda_ssd.py --quarentena          backup + move órfãos para _guarda_ssd/quarentena/<data>/
-python guarda_ssd.py --verificar [N]       backup + confere o SHA-256 de N arquivos (padrão 200; 0 = todos)
-python guarda_ssd.py --baixar              copia também arquivos que o Drive ainda não baixou
-python guarda_ssd.py --status              resultado da última execução
-python guarda_ssd.py --historico           abre o histórico no navegador
-python guarda_ssd.py --limpar              mostra o que venceu nas pastas de guarda e pergunta se apaga
-python guarda_ssd.py --configurar-limpeza  menu: apagar o que vence sozinho, com autorização ou nunca
-python guarda_ssd.py --testar-notificacao  envia uma notificação de teste do Windows
-python guarda_ssd.py --alertar-se-velho 7  se o SSD não estiver plugado e o último backup tiver
+python mnemosine.py                       backup incremental
+python mnemosine.py --simular             mostra o que faria, sem tocar em nada
+python mnemosine.py --forcar              ignora a trava de segurança
+python mnemosine.py --orfaos              só lista o que está no SSD e saiu do Drive (não copia nada)
+python mnemosine.py --quarentena          backup + move órfãos para _mnemosine/quarentena/<data>/
+python mnemosine.py --verificar [N]       backup + confere o SHA-256 de N arquivos (padrão 200; 0 = todos)
+python mnemosine.py --baixar              copia também arquivos que o Drive ainda não baixou
+python mnemosine.py --status              resultado da última execução
+python mnemosine.py --historico           abre o histórico no navegador
+python mnemosine.py --limpar              mostra o que venceu nas pastas de guarda e pergunta se apaga
+python mnemosine.py --configurar-limpeza  menu: apagar o que vence sozinho, com autorização ou nunca
+python mnemosine.py --testar-notificacao  envia uma notificação de teste do Windows
+python mnemosine.py --alertar-se-velho 7  se o SSD não estiver plugado e o último backup tiver
                                          mais de 7 dias, mostra uma notificação (no máximo 1x/dia)
-python guarda_ssd.py --config ARQUIVO      usa outro guarda_ssd_config.json
-python guarda_ssd.py --registrar D:        registra o SSD (com --forcar para trocar de disco)
+python mnemosine.py --config ARQUIVO      usa outro mnemosine_config.json
+python mnemosine.py --registrar D:        registra o SSD (com --forcar para trocar de disco)
 ```
 
-Os flags combinam: `python guarda_ssd.py --quarentena --verificar 500` faz backup, quarentena e verificação.
+Os flags combinam: `python mnemosine.py --quarentena --verificar 500` faz backup, quarentena e verificação.
 
 ### Modos de saída
 
@@ -200,8 +200,8 @@ São duas pastas separadas, para que dê para saber só de olhar no Explorer o q
 
 | Pasta | O que vai para lá | Quando | Prazo |
 |---|---|---|---|
-| `_guarda_ssd\versoes-antigas\<data-hora>\` | a versão anterior de um arquivo que você editou | toda vez que o backup sobrescreve algo | `dias_versoes` (90) |
-| `_guarda_ssd\quarentena\<data-hora>\` | arquivos que você apagou (ou tirou) da origem | só com `--quarentena` | `dias_quarentena` (90) |
+| `_mnemosine\versoes-antigas\<data-hora>\` | a versão anterior de um arquivo que você editou | toda vez que o backup sobrescreve algo | `dias_versoes` (90) |
+| `_mnemosine\quarentena\<data-hora>\` | arquivos que você apagou (ou tirou) da origem | só com `--quarentena` | `dias_quarentena` (90) |
 
 Dentro de cada pasta datada, a estrutura de pastas é a mesma do espelho. **Para recuperar, copie o arquivo de volta** com o Explorer. A data no nome da pasta é *quando o backup guardou*; a data do arquivo lá dentro é *de quando ele é*.
 
@@ -219,7 +219,7 @@ Você escolhe o que acontece com o que passa do prazo, nas duas pastas de guarda
 | **Perguntar antes** | `perguntar` | só apaga com a sua confirmação |
 | **Nunca apagar** | `nunca` | não apaga nem pergunta; você limpa quando quiser |
 
-**Para mudar, dê dois cliques em `Configurar limpeza.bat`.** O menu mostra a escolha atual, pede 1, 2 ou 3 e os prazos (Enter mantém o que está). Quem preferir pode editar `apagar_vencidos`, `dias_versoes` e `dias_quarentena` em `programa\guarda_ssd_config.json`.
+**Para mudar, dê dois cliques em `Configurar limpeza.bat`.** O menu mostra a escolha atual, pede 1, 2 ou 3 e os prazos (Enter mantém o que está). Quem preferir pode editar `apagar_vencidos`, `dias_versoes` e `dias_quarentena` em `programa\mnemosine_config.json`.
 
 Como cada escolha se comporta:
 
@@ -234,9 +234,9 @@ Toda limpeza confirmada fica registrada no log e no histórico.
 
 ## Histórico
 
-Toda execução real (backup, conferência ou limpeza; simulações não) acrescenta um registro a `_guarda_ssd\historico.json` no SSD, que guarda as 200 mais recentes, e regenera `historico.html` ao lado dele. A página mostra o último backup, a última conferência, o que está guardado em versões antigas e em quarentena, e uma tabela com todas as execuções. Uma cópia da página fica em `%LOCALAPPDATA%\GuardaSSD\historico.html`, para abrir mesmo com o SSD desplugado.
+Toda execução real (backup, conferência ou limpeza; simulações não) acrescenta um registro a `_mnemosine\historico.json` no SSD, que guarda as 200 mais recentes, e regenera `historico.html` ao lado dele. A página mostra o último backup, a última conferência, o que está guardado em versões antigas e em quarentena, e uma tabela com todas as execuções. Uma cópia da página fica em `%LOCALAPPDATA%\Mnemosine\historico.html`, para abrir mesmo com o SSD desplugado.
 
-Para abrir: `Ver histórico.bat` ou `python guarda_ssd.py --historico`.
+Para abrir: `Ver histórico.bat` ou `python mnemosine.py --historico`.
 
 ## Conferência (`conferir_ssd.py`)
 
@@ -244,16 +244,16 @@ Para abrir: `Ver histórico.bat` ou `python guarda_ssd.py --historico`.
 python conferir_ssd.py                 confere e mostra o resultado
 python conferir_ssd.py --limite 0      lista todas as divergências (padrão: até 30 por tipo)
 python conferir_ssd.py --extras        lista também o que só existe no SSD
-python conferir_ssd.py --config ARQ    usa outro guarda_ssd_config.json
+python conferir_ssd.py --config ARQ    usa outro mnemosine_config.json
 ```
 
 Aceita os mesmos modos de saída do backup: `--detalhado`, `--silencioso` (notifica se houver divergência) e `--json`.
 
 **Só leitura.** Nunca copia, move ou apaga. Grava apenas o próprio log e o registro no histórico.
 
-**O que compara.** Todos os arquivos da origem contra o espelho no SSD, pelos metadados: se o arquivo existe, se o tamanho é igual e se a data de modificação bate (dentro de `tolerancia_seg`). Metadados não fazem o Google Drive baixar nada, então a conferência leva poucos segundos mesmo com o Drive em modo *stream*. Para conferir o **conteúdo** byte a byte, use `guarda_ssd.py --verificar` (mais lento; ele lê os arquivos).
+**O que compara.** Todos os arquivos da origem contra o espelho no SSD, pelos metadados: se o arquivo existe, se o tamanho é igual e se a data de modificação bate (dentro de `tolerancia_seg`). Metadados não fazem o Google Drive baixar nada, então a conferência leva poucos segundos mesmo com o Drive em modo *stream*. Para conferir o **conteúdo** byte a byte, use `mnemosine.py --verificar` (mais lento; ele lê os arquivos).
 
-**Por que é um script separado.** A conferência reimplementa a varredura e a comparação em vez de importar o `guarda_ssd.py`. Se houvesse um erro na lógica do backup, a mesma lógica usada para conferir o confirmaria. Os dois compartilham apenas o `guarda_ssd_config.json` (origem, exclusões, tolerância), a identificação do SSD e o `visual_ssd.py`, que só cuida da apresentação. Um dos testes roda os dois em sequência e exige que concordem.
+**Por que é um script separado.** A conferência reimplementa a varredura e a comparação em vez de importar o `mnemosine.py`. Se houvesse um erro na lógica do backup, a mesma lógica usada para conferir o confirmaria. Os dois compartilham apenas o `mnemosine_config.json` (origem, exclusões, tolerância), a identificação do SSD e o `visual_ssd.py`, que só cuida da apresentação. Um dos testes roda os dois em sequência e exige que concordem.
 
 **Quando rodar.** Depois do backup; o `Fazer backup.bat` já faz isso. Antes não é necessário: comparar os dois lados é o primeiro passo do próprio backup, e é o que o `--simular` mostra.
 
@@ -265,7 +265,7 @@ O resultado separa as divergências por tipo:
 | Tamanho diferente | Mesmo caminho, tamanhos diferentes. | sim |
 | SSD desatualizado | O Drive tem data mais recente. | sim |
 | SSD mais novo que o Drive | O arquivo do SSD foi mexido depois do backup. | sim |
-| Só no SSD | Saiu do Drive e ainda não foi para a quarentena. Veja com `--extras`; para tirar do espelho, `guarda_ssd.py --quarentena`. | não |
+| Só no SSD | Saiu do Drive e ainda não foi para a quarentena. Veja com `--extras`; para tirar do espelho, `mnemosine.py --quarentena`. | não |
 
 Divergências logo após um backup costumam ser arquivos editados durante a execução: rode o backup de novo. Se persistirem, a lista diz quais são.
 
@@ -276,11 +276,11 @@ Divergências logo após um backup costumam ser arquivos editados durante a exec
 | 2 | SSD de backup não encontrado |
 | 3 | origem indisponível (Google Drive fechado?) |
 | 4 | origem vazia |
-| 10 | configuração não encontrada (rode `guarda_ssd.py --registrar`) |
+| 10 | configuração não encontrada (rode `mnemosine.py --registrar`) |
 
 ## Configuração
 
-O arquivo `guarda_ssd_config.json` fica ao lado do script, na pasta `programa`. Se não existir ali, o script procura em `%LOCALAPPDATA%\GuardaSSD\`. Qualquer chave omitida usa o valor padrão.
+O arquivo `mnemosine_config.json` fica ao lado do script, na pasta `programa`. Se não existir ali, o script procura em `%LOCALAPPDATA%\Mnemosine\`. Qualquer chave omitida usa o valor padrão.
 
 | Chave | Padrão | Descrição |
 |---|---|---|
@@ -302,14 +302,14 @@ O arquivo `guarda_ssd_config.json` fica ao lado do script, na pasta `programa`. 
 
 ### O que é público e o que não é
 
-`serial` e `id` não são senhas, mas juntos são exatamente o que identifica o seu SSD para o script. Se o repositório for público, prefira não versionar o `guarda_ssd_config.json` real. O `.gitignore` deste repositório já o ignora; versione o `guarda_ssd_config.example.json` no lugar. Os logs, o histórico e o `ultimo_resultado.json` contêm nomes de arquivos do seu Drive e ficam fora da pasta do repositório (no SSD e em `%LOCALAPPDATA%`).
+`serial` e `id` não são senhas, mas juntos são exatamente o que identifica o seu SSD para o script. Se o repositório for público, prefira não versionar o `mnemosine_config.json` real. O `.gitignore` deste repositório já o ignora; versione o `mnemosine_config.example.json` no lugar. Os logs, o histórico e o `ultimo_resultado.json` contêm nomes de arquivos do seu Drive e ficam fora da pasta do repositório (no SSD e em `%LOCALAPPDATA%`).
 
 ## O que fica no SSD
 
 ```
 D:\
 ├── (espelho do Drive, ou dentro de pasta_destino)
-└── _guarda_ssd\
+└── _mnemosine\
     ├── IDENTIDADE_SSD.txt              id + serial + data do registro. Não apague.
     ├── ultimo_resultado.json           resumo da última execução
     ├── historico.json                  últimas 200 execuções
@@ -326,47 +326,37 @@ D:\
 
 O espelho são arquivos comuns. **Para restaurar, basta copiar de volta** com o Explorer. Não há formato proprietário nem banco de dados.
 
-No computador, em `%LOCALAPPDATA%\GuardaSSD\`, ficam o log local, o `ultimo_resultado.json` (para `--status` e `--alertar-se-velho` funcionarem sem o SSD plugado), o lock, a cópia do `historico.html`, e o `conferencia.log` e o `ultima_conferencia.json` da conferência.
+No computador, em `%LOCALAPPDATA%\Mnemosine\`, ficam o log local, o `ultimo_resultado.json` (para `--status` e `--alertar-se-velho` funcionarem sem o SSD plugado), o lock, a cópia do `historico.html`, e o `conferencia.log` e o `ultima_conferencia.json` da conferência.
 
 ## Agendamento
 
 A forma mais simples é rodar a cada 30 minutos. Quando o SSD não está plugado o script sai em menos de um segundo com código 2, então o custo é zero. Use `pythonw.exe` (não abre janela) e `--silencioso` (você só é avisado quando há problema). A conferência roda em seguida se o backup terminar com código 0; o Agendador não abre o comando na pasta do script, então use caminhos completos:
 
 ```bat
-schtasks /Create /TN "GuardaSSD" /SC MINUTE /MO 30 /TR "cmd /c \"\"C:\Python312\pythonw.exe\" \"C:\Ferramentas\mnemosine\programa\guarda_ssd.py\" --quarentena --silencioso --alertar-se-velho 7 && \"C:\Python312\pythonw.exe\" \"C:\Ferramentas\mnemosine\programa\conferir_ssd.py\" --silencioso\""
+schtasks /Create /TN "Mnemosine" /SC MINUTE /MO 30 /TR "cmd /c \"\"C:\Python312\pythonw.exe\" \"C:\Ferramentas\mnemosine\programa\mnemosine.py\" --quarentena --silencioso --alertar-se-velho 7 && \"C:\Python312\pythonw.exe\" \"C:\Ferramentas\mnemosine\programa\conferir_ssd.py\" --silencioso\""
 ```
 
 Com `--alertar-se-velho 7`, se você ficar uma semana sem plugar o SSD aparece uma notificação, no máximo uma por dia.
 
 O agendamento segue a escolha de limpeza: com o padrão (`automatico`) ele apaga o que venceu; com `perguntar` ele só avisa (veja [Limpeza do que está guardado](#limpeza-do-que-está-guardado)).
 
-Para conferir se as notificações aparecem na sua tela, rode `python guarda_ssd.py --testar-notificacao`.
+Para conferir se as notificações aparecem na sua tela, rode `python mnemosine.py --testar-notificacao`.
 
-Uma vez por mês vale rodar `python guarda_ssd.py --quarentena --verificar` e olhar o resultado.
+Uma vez por mês vale rodar `python mnemosine.py --quarentena --verificar` e olhar o resultado.
 
 ## Perguntas frequentes
-
-**Eu usava a versão que se chamava `sync_ssd` (até a 2.1).** Basta atualizar os arquivos e rodar o backup uma vez; nada precisa ser refeito à mão. Na primeira execução, o programa renomeia sozinho, sem sobrescrever nada:
-
-| Antes | Depois |
-|---|---|
-| `programa\sync_ssd_config.json` | `programa\guarda_ssd_config.json` |
-| `%LOCALAPPDATA%\SyncSSD\` | `%LOCALAPPDATA%\GuardaSSD\` |
-| `_sync_ssd\` no SSD | `_guarda_ssd\` no SSD (só numa execução real; a simulação apenas lê) |
-
-O registro do SSD (serial e id) continua valendo, e a tela avisa o que foi renomeado. Se você tinha uma tarefa agendada chamando `sync_ssd.py`, recrie-a com o comando da seção [Agendamento](#agendamento).
 
 **A letra do SSD mudou (era D:, virou E:).** Nada a fazer. O script varre todas as letras e reconhece o disco pelo serial e pela identidade.
 
 **Formatei o SSD.** O serial muda na formatação. Rode `--registrar E: --forcar` para registrar de novo; o `.txt` de identidade também precisa ser recriado, e o `--registrar` faz isso.
 
-**Quero usar dois SSDs alternados.** Cada `guarda_ssd_config.json` aponta para um disco. Mantenha dois arquivos e chame com `--config`.
+**Quero usar dois SSDs alternados.** Cada `mnemosine_config.json` aponta para um disco. Mantenha dois arquivos e chame com `--config`.
 
-**Apaguei um arquivo do Drive por engano.** Se o backup rodou com `--quarentena` depois disso, ele está em `_guarda_ssd\quarentena\<data>\` no SSD, na mesma pasta em que estava. Copie de volta. Se o backup ainda não rodou, ele continua no espelho.
+**Apaguei um arquivo do Drive por engano.** Se o backup rodou com `--quarentena` depois disso, ele está em `_mnemosine\quarentena\<data>\` no SSD, na mesma pasta em que estava. Copie de volta. Se o backup ainda não rodou, ele continua no espelho.
 
-**Editei um arquivo e quero a versão de antes.** Está em `_guarda_ssd\versoes-antigas\<data>\`, onde a data é a do backup que guardou a versão. Há uma pasta por backup; procure pela mais recente que tenha o arquivo.
+**Editei um arquivo e quero a versão de antes.** Está em `_mnemosine\versoes-antigas\<data>\`, onde a data é a do backup que guardou a versão. Há uma pasta por backup; procure pela mais recente que tenha o arquivo.
 
-**As notificações não aparecem.** Rode `python guarda_ssd.py --testar-notificacao`. Se a mensagem de teste não surgir no canto da tela, abra a central de notificações (Windows + N): se ela estiver lá, o "Não incomodar" está ligado e o Windows guarda os avisos sem mostrá-los. Desligue-o, ou em *Configurações → Sistema → Notificações* permita que o Windows PowerShell (o remetente dos avisos) notifique mesmo no "Não incomodar".
+**As notificações não aparecem.** Rode `python mnemosine.py --testar-notificacao`. Se a mensagem de teste não surgir no canto da tela, abra a central de notificações (Windows + N): se ela estiver lá, o "Não incomodar" está ligado e o Windows guarda os avisos sem mostrá-los. Desligue-o, ou em *Configurações → Sistema → Notificações* permita que o Windows PowerShell (o remetente dos avisos) notifique mesmo no "Não incomodar".
 
 **O Drive está em modo "stream" e o backup pulou milhares de arquivos.** No Google Drive para Desktop, clique com o botão direito na pasta e marque "Disponível offline", ou troque para o modo "espelhar". `--baixar` força a cópia, mas vai baixar tudo.
 
@@ -386,7 +376,7 @@ python -m unittest -v
 
 Só biblioteca padrão.
 
-- `test_guarda_ssd.py`: varredura, comparação, detecção de movidos, cópia atômica, versões antigas, quarentena, prazos independentes, migração da pasta `versoes`, inventário, trava, espaço, lock, histórico, os quatro modos de saída (tela sem cor fora do terminal, `--detalhado`, `--silencioso` com notificação só em problema, `--json` também nos erros) e a limpeza (as três escolhas, a pergunta S/N, o aviso diário no agendamento, `--limpar`, o menu de configuração).
+- `test_mnemosine.py`: varredura, comparação, detecção de movidos, cópia atômica, versões antigas, quarentena, prazos independentes, migração da pasta `versoes`, inventário, trava, espaço, lock, histórico, os quatro modos de saída (tela sem cor fora do terminal, `--detalhado`, `--silencioso` com notificação só em problema, `--json` também nos erros) e a limpeza (as três escolhas, a pergunta S/N, o aviso diário no agendamento, `--limpar`, o menu de configuração).
 - `test_conferir_ssd.py`: cada tipo de divergência, exclusões, códigos de saída, os modos de saída, o registro no histórico, garante que a conferência não altera o espelho, e roda backup + conferência em sequência exigindo que concordem.
 - `test_visual_ssd.py`: formatação em português, agrupamento por pasta, fallback sem cor e sem símbolos, limite e escape do histórico.
 

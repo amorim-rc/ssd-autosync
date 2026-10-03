@@ -16,6 +16,3 @@ Um backup é a fonte de Mnemósine dos arquivos: o lugar onde nada se perde. Est
 pasta para um SSD específico e, antes de sobrescrever qualquer coisa, guarda a versão anterior. O
 que é apagado na origem não desaparece do espelho de imediato: vai para uma quarentena, de onde ainda
 dá para recuperar. O esquecimento, quando vem, vem tarde, por prazo declarado e com aviso.
-
-O programa mantém o nome técnico `guarda_ssd.py`, e as pastas que ele cria no SSD continuam se
-chamando `_guarda_ssd`. Mnemósine é o nome do projeto.

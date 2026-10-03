@@ -1,7 +1,7 @@
 """
 Testes do conferir_ssd.py. Só biblioteca padrão:  python -m unittest -v
 
-O último teste roda o guarda_ssd.py de verdade e confere o resultado com o
+O último teste roda o mnemosine.py de verdade e confere o resultado com o
 conferir_ssd.py: as duas ferramentas têm código independente e precisam
 concordar sobre o que é "SSD idêntico ao Drive".
 """
@@ -208,10 +208,10 @@ class TestNomeAntigoDaPastaNoSSD(Base):
 
 
 class TestConcordaComOBackup(Base):
-    """guarda_ssd.py faz o backup; conferir_ssd.py tem que dizer 'idêntico'."""
+    """mnemosine.py faz o backup; conferir_ssd.py tem que dizer 'idêntico'."""
 
     def test_backup_seguido_de_conferencia(self):
-        import guarda_ssd as s
+        import mnemosine as s
         cfg = json.loads(self.config.read_text(encoding="utf-8"))
         cfg.update(limite_abs=10_000, margem_espaco_gb=0)
         self.config.write_text(json.dumps(cfg), encoding="utf-8")
@@ -224,8 +224,8 @@ class TestConcordaComOBackup(Base):
         s.PASTA_LOCAL = self.tmp / "local"
         # a migração de nomes antigos nunca pode tocar nos arquivos reais da máquina
         s.PASTA_LOCAL_LEGADA = self.tmp / "local_legado"
-        s.CONFIG_PADRAO = self.tmp / "programa" / "guarda_ssd_config.json"
-        s.CONFIG_LEGADO = self.tmp / "programa" / "sync_ssd_config.json"
+        s.CONFIG_PADRAO = self.tmp / "programa" / "mnemosine_config.json"
+        s.CONFIG_LEGADO = self.tmp / "programa" / "guarda_ssd_config.json"
 
         def backup(*args):
             with contextlib.redirect_stdout(io.StringIO()):

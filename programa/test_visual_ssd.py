@@ -89,7 +89,7 @@ class TestMigrarPasta(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_move_e_mescla_sem_sobrescrever(self):
-        antiga, nova = self.tmp / "SyncSSD", self.tmp / "GuardaSSD"
+        antiga, nova = self.tmp / "GuardaSSD", self.tmp / "Mnemosine"
         (antiga / "sub").mkdir(parents=True)
         (antiga / "sub" / "a.txt").write_text("a")
         (antiga / "comum.txt").write_text("antigo")
@@ -117,7 +117,7 @@ class TestHistorico(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_limite_de_registros_e_html(self):
-        pasta = self.tmp / "ssd" / "_guarda_ssd"        # ainda não existe
+        pasta = self.tmp / "ssd" / "_mnemosine"        # ainda não existe
         copia = self.tmp / "local"
         for i in range(205):
             v.registrar_historico(pasta, {"tipo": "backup", "quando": f"2026-09-30T10:{i // 60:02}:{i % 60:02}",
